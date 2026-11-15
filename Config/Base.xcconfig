@@ -1,0 +1,4 @@
+// Shared build settings for the app target.
+// Signing team: copy Local.xcconfig.example to Local.xcconfig (git-ignored) and set your team ID.
+// Without it, builds run unsigned-for-device and simulator builds still work.
+#include? "Local.xcconfig"

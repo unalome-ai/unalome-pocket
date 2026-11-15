@@ -1,0 +1,149 @@
+{
+  "version": 1,
+  "models": [
+    {
+      "id": "mlx-community/Qwen3.5-0.8B-4bit",
+      "displayName": "Qwen 3.5 0.8B",
+      "revision": "da28692b5f139cb0ec58a356b437486b7dac7462",
+      "downloadSizeBytes": 652027143,
+      "minimumMemoryBytes": 1319303483,
+      "minimumMemoryIsEstimate": true,
+      "supportsVision": true,
+      "license": {
+        "name": "Apache 2.0",
+        "url": "https://huggingface.co/Qwen/Qwen3.5-0.8B/blob/main/LICENSE"
+      },
+      "goodFor": "Quick answers on any supported iPhone. The smallest and fastest.",
+      "tier": "small",
+      "qualityRank": 1,
+      "supportsThinking": true
+    },
+    {
+      "id": "mlx-community/gemma-3-1b-it-qat-4bit",
+      "displayName": "Gemma 3 1B",
+      "revision": "15fed4eafb456c6fcb2a1165f19ac609670ed14b",
+      "downloadSizeBytes": 767171175,
+      "minimumMemoryBytes": 1457476322,
+      "minimumMemoryIsEstimate": true,
+      "supportsVision": false,
+      "license": {
+        "name": "Gemma Terms of Use",
+        "url": "https://ai.google.dev/gemma/terms"
+      },
+      "goodFor": "Short everyday questions and rewording text.",
+      "tier": "small",
+      "qualityRank": 2,
+      "supportsThinking": false
+    },
+    {
+      "id": "mlx-community/LFM2.5-1.2B-Instruct-4bit",
+      "displayName": "LFM 2.5 1.2B",
+      "revision": "dee2f8a2786e6648bb644a7ca40652842490034b",
+      "downloadSizeBytes": 663393252,
+      "minimumMemoryBytes": 1332942814,
+      "minimumMemoryIsEstimate": true,
+      "supportsVision": false,
+      "license": {
+        "name": "LFM Open License v1.0",
+        "url": "https://huggingface.co/LiquidAI/LFM2.5-1.2B-Instruct/blob/main/LICENSE"
+      },
+      "goodFor": "Fast, concise chat and summaries.",
+      "tier": "small",
+      "qualityRank": 3,
+      "supportsThinking": false
+    },
+    {
+      "id": "mlx-community/Qwen3.5-2B-4bit",
+      "displayName": "Qwen 3.5 2B",
+      "revision": "674aaa7240b91e8012fcad5d791b7dfe5ba90207",
+      "downloadSizeBytes": 1749079691,
+      "minimumMemoryBytes": 2635766541,
+      "minimumMemoryIsEstimate": true,
+      "supportsVision": true,
+      "license": {
+        "name": "Apache 2.0",
+        "url": "https://huggingface.co/Qwen/Qwen3.5-2B/blob/main/LICENSE"
+      },
+      "goodFor": "Better reasoning than the small models, still quick.",
+      "tier": "standard",
+      "qualityRank": 4,
+      "supportsThinking": true
+    },
+    {
+      "id": "mlx-community/gemma-4-e2b-it-4bit",
+      "displayName": "Gemma 4 E2B",
+      "revision": "238767527555cb75a05732a84dff5d6ba0dd6809",
+      "downloadSizeBytes": 3583086498,
+      "minimumMemoryBytes": 4836574709,
+      "minimumMemoryIsEstimate": true,
+      "supportsVision": true,
+      "license": {
+        "name": "Apache 2.0",
+        "url": "https://ai.google.dev/gemma/apache_2"
+      },
+      "goodFor": "Balanced everyday chat with good writing quality.",
+      "tier": "standard",
+      "qualityRank": 5,
+      "supportsThinking": true,
+      "reasoningTags": {
+        "start": "<|channel>thought",
+        "end": "<channel|>"
+      }
+    },
+    {
+      "id": "mlx-community/Qwen3.5-4B-MLX-4bit",
+      "displayName": "Qwen 3.5 4B",
+      "revision": "32f3e8ecf65426fc3306969496342d504bfa13f3",
+      "downloadSizeBytes": 3061129077,
+      "minimumMemoryBytes": 4210225804,
+      "minimumMemoryIsEstimate": true,
+      "supportsVision": true,
+      "license": {
+        "name": "Apache 2.0",
+        "url": "https://huggingface.co/Qwen/Qwen3.5-4B/blob/main/LICENSE"
+      },
+      "goodFor": "Stronger reasoning and longer answers.",
+      "tier": "large",
+      "qualityRank": 6,
+      "supportsThinking": true
+    },
+    {
+      "id": "mlx-community/gemma-4-e4b-it-4bit",
+      "displayName": "Gemma 4 E4B",
+      "revision": "475b9088d29754a3379866cf5aeb6b41acd313c2",
+      "downloadSizeBytes": 5179239349,
+      "minimumMemoryBytes": 6751958130,
+      "minimumMemoryIsEstimate": true,
+      "supportsVision": true,
+      "license": {
+        "name": "Apache 2.0",
+        "url": "https://ai.google.dev/gemma/apache_2"
+      },
+      "goodFor": "Higher-quality answers on 12 GB phones, iPad and Mac.",
+      "tier": "large",
+      "qualityRank": 7,
+      "supportsThinking": true,
+      "reasoningTags": {
+        "start": "<|channel>thought",
+        "end": "<channel|>"
+      }
+    },
+    {
+      "id": "mlx-community/Qwen3.5-9B-MLX-4bit",
+      "displayName": "Qwen 3.5 9B",
+      "revision": "938d8919941c6e7efd3c7150eff7fe9d12afa631",
+      "downloadSizeBytes": 5977071067,
+      "minimumMemoryBytes": 7709356192,
+      "minimumMemoryIsEstimate": true,
+      "supportsVision": true,
+      "license": {
+        "name": "Apache 2.0",
+        "url": "https://huggingface.co/Qwen/Qwen3.5-9B/blob/main/LICENSE"
+      },
+      "goodFor": "The best answers here, for Macs with 16 GB or more.",
+      "tier": "macOnly",
+      "qualityRank": 8,
+      "supportsThinking": true
+    }
+  ]
+}
