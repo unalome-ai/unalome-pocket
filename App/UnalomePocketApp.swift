@@ -42,7 +42,8 @@ struct UnalomePocketApp: App {
                 library: library,
                 preferences: preferences,
                 appleModelAvailability: { AppleChatEngine.availability },
-                canRunLocalModels: canRunLocalModels
+                canRunLocalModels: canRunLocalModels,
+                attachments: try AttachmentStore.applicationSupport()
             )
         } catch {
             // Without its stores the app can neither show nor save anything.

@@ -1,10 +1,14 @@
 import ChatCore
+import PhotosUI
+import SwiftData
 import SwiftUI
 import UnalomeDesign
 
 /// One conversation: the message list, the status pill and the composer.
 public struct ChatView: View {
     @State private var model: ChatViewModel
+    @State private var voice = VoiceInput()
+    @State private var isShowingPersonas = false
     @Environment(\.scenePhase) private var scenePhase
     private let services: AppServices
 
@@ -19,6 +23,9 @@ public struct ChatView: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 24) {
                 ForEach(model.messages) { message in
+                    if message.id == model.contextBoundaryMessageID {
+                        ContextLimitNote()
+                    }
                     MessageRow(message: message, model: model)
                 }
             }
@@ -34,7 +41,7 @@ public struct ChatView: View {
             }
         }
         .safeAreaInset(edge: .bottom) {
-            ComposerArea(model: model)
+            ComposerArea(model: model, voice: voice)
         }
         .background(UnalomeColor.background)
         .navigationTitle(model.conversation.displayTitle)
@@ -43,14 +50,31 @@ public struct ChatView: View {
         #endif
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
-                ModelPill(services: services, model: model)
+                ModelPill(services: services, model: model) { isShowingPersonas = true }
+            }
+        }
+        .sheet(isPresented: $isShowingPersonas) {
+            NavigationStack {
+                PersonasView(services: services)
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Done") { isShowingPersonas = false }
+                        }
+                    }
             }
         }
         // Leaving the conversation stops the reply and keeps what was written so far.
-        .onDisappear { model.stop() }
-        // iOS does not allow GPU work in the background, so stop before the app is suspended.
+        .onDisappear {
+            model.stop()
+            voice.cancel()
+            model.discardDraftAttachments()
+        }
+        // iOS does not allow GPU work or recording in the background, so stop before suspension.
         .onChange(of: scenePhase) { _, phase in
-            if phase == .background { model.stop() }
+            if phase == .background {
+                model.stop()
+                voice.cancel()
+            }
         }
     }
 }
@@ -77,12 +101,25 @@ private struct MessageRow: View {
         let shape = RoundedRectangle(cornerRadius: UnalomeRadius.card, style: .continuous)
         return HStack {
             Spacer(minLength: 48)
-            MarkdownText(message.text)
-                .foregroundStyle(UnalomeColor.textPrimary)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-                .background(UnalomeColor.glassFill, in: shape)
-                .overlay { shape.strokeBorder(UnalomeGradient.brand, lineWidth: 1) }
+            VStack(alignment: .trailing, spacing: 6) {
+                if !message.attachmentNames.isEmpty {
+                    HStack(spacing: 6) {
+                        ForEach(message.attachmentNames, id: \.self) { name in
+                            if let url = model.url(forAttachment: name) {
+                                AttachmentThumbnail(url: url, side: 96)
+                            }
+                        }
+                    }
+                }
+                if !message.text.isEmpty {
+                    MarkdownText(message.text)
+                        .foregroundStyle(UnalomeColor.textPrimary)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                        .background(UnalomeColor.glassFill, in: shape)
+                        .overlay { shape.strokeBorder(UnalomeGradient.brand, lineWidth: 1) }
+                }
+            }
         }
         .contextMenu {
             CopyButton(text: message.text)
@@ -91,7 +128,9 @@ private struct MessageRow: View {
             }
         }
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("You: \(message.text)")
+        .accessibilityLabel(
+            "You: \(message.text)"
+                + (message.attachmentNames.isEmpty ? "" : ", \(message.attachmentNames.count) image(s) attached"))
     }
 
     private var assistantReply: some View {
@@ -263,6 +302,7 @@ private struct EmptyChatView: View {
 
 private struct ComposerArea: View {
     @Bindable var model: ChatViewModel
+    let voice: VoiceInput
 
     var body: some View {
         VStack(spacing: 10) {
@@ -279,6 +319,23 @@ private struct ComposerArea: View {
                     .multilineTextAlignment(.center)
             }
 
+            if let reason = voice.unavailableReason {
+                Text(reason)
+                    .unalomeText(.footnote)
+                    .foregroundStyle(UnalomeColor.textSecondary)
+                    .multilineTextAlignment(.center)
+            }
+
+            if voice.isRecording {
+                HStack(spacing: 8) {
+                    PulsingDot(color: UnalomeColor.error)
+                    Text("Listening on this device… tap the microphone to stop")
+                        .unalomeText(.footnote)
+                        .foregroundStyle(UnalomeColor.textSecondary)
+                }
+                .accessibilityElement(children: .combine)
+            }
+
             if model.editingMessage != nil {
                 HStack {
                     Text("Editing your last message")
@@ -291,7 +348,7 @@ private struct ComposerArea: View {
                 .padding(.horizontal, 8)
             }
 
-            Composer(model: model)
+            Composer(model: model, voice: voice)
         }
         .padding(.horizontal, 12)
         .padding(.bottom, 8)
@@ -300,58 +357,225 @@ private struct ComposerArea: View {
 
 private struct Composer: View {
     @Bindable var model: ChatViewModel
+    let voice: VoiceInput
     @ScaledMetric(relativeTo: .body) private var buttonSize: CGFloat = 34
+    @State private var pickedPhotos: [PhotosPickerItem] = []
+    @State private var isShowingCamera = false
+    @State private var isShowingPhotos = false
+
+    /// Small models handle a few images per message at most.
+    static let maxImages = 4
 
     var body: some View {
-        HStack(alignment: .bottom, spacing: 8) {
-            TextField("Message", text: $model.draft, axis: .vertical)
-                .unalomeText(.body)
-                .lineLimit(1...6)
-                .textFieldStyle(.plain)
-                .padding(.vertical, 8)
-                .onSubmit(model.send)
+        VStack(alignment: .leading, spacing: 8) {
+            if !model.draftAttachments.isEmpty {
+                ScrollView(.horizontal) {
+                    HStack(spacing: 8) {
+                        ForEach(model.draftAttachments, id: \.self) { name in
+                            if let url = model.url(forAttachment: name) {
+                                AttachmentThumbnail(url: url, side: 64)
+                                    .overlay(alignment: .topTrailing) {
+                                        Button {
+                                            model.removeDraftAttachment(name)
+                                        } label: {
+                                            Image(systemName: "xmark.circle.fill")
+                                                .symbolRenderingMode(.palette)
+                                                .foregroundStyle(UnalomeColor.textPrimary, UnalomeColor.background.opacity(0.8))
+                                                .padding(3)
+                                        }
+                                        .accessibilityLabel("Remove image")
+                                    }
+                            }
+                        }
+                    }
+                    .padding(.top, 6)
+                }
+                .scrollIndicators(.hidden)
+            }
 
-            if model.isGenerating {
-                Button(action: model.stop) {
-                    Image(systemName: "stop.fill")
-                        .frame(width: buttonSize, height: buttonSize)
-                        .background(UnalomeColor.textPrimary, in: Circle())
-                        .foregroundStyle(UnalomeColor.background)
+            HStack(alignment: .bottom, spacing: 8) {
+                if model.supportsImages {
+                    attachMenu
                 }
-                .accessibilityLabel("Stop generating")
-            } else {
-                Button(action: model.send) {
-                    Image(systemName: "arrow.up")
-                        .fontWeight(.bold)
-                        .frame(width: buttonSize, height: buttonSize)
-                        .background(UnalomeGradient.brand, in: Circle())
-                        .foregroundStyle(UnalomeColor.background)
+
+                TextField("Message", text: $model.draft, axis: .vertical)
+                    .unalomeText(.body)
+                    .lineLimit(1...6)
+                    .textFieldStyle(.plain)
+                    .padding(.vertical, 8)
+                    .onSubmit(model.send)
+
+                if !model.isGenerating {
+                    micButton
                 }
-                .disabled(!model.canSend)
-                .opacity(model.canSend ? 1 : 0.4)
-                .accessibilityLabel(model.editingMessage == nil ? "Send" : "Send edited message")
+
+                if model.isGenerating {
+                    Button(action: model.stop) {
+                        Image(systemName: "stop.fill")
+                            .frame(width: buttonSize, height: buttonSize)
+                            .background(UnalomeColor.textPrimary, in: Circle())
+                            .foregroundStyle(UnalomeColor.background)
+                    }
+                    .accessibilityLabel("Stop generating")
+                } else {
+                    Button(action: send) {
+                        Image(systemName: "arrow.up")
+                            .fontWeight(.bold)
+                            .frame(width: buttonSize, height: buttonSize)
+                            .background(UnalomeGradient.brand, in: Circle())
+                            .foregroundStyle(UnalomeColor.background)
+                    }
+                    .disabled(!model.canSend)
+                    .opacity(model.canSend ? 1 : 0.4)
+                    .accessibilityLabel(model.editingMessage == nil ? "Send" : "Send edited message")
+                }
             }
         }
         .buttonStyle(.plain)
-        .padding(.leading, 16)
+        .padding(.leading, model.supportsImages ? 8 : 16)
         .padding(.trailing, 6)
         .padding(.vertical, 6)
         .liquidGlass(in: RoundedRectangle(cornerRadius: UnalomeRadius.card, style: .continuous), interactive: true)
+        .photosPicker(
+            isPresented: $isShowingPhotos, selection: $pickedPhotos,
+            maxSelectionCount: max(remainingImages, 1), matching: .images, photoLibrary: .shared())
+        .onChange(of: pickedPhotos) { _, items in
+            guard !items.isEmpty else { return }
+            pickedPhotos = []
+            Task {
+                for item in items {
+                    if let data = try? await item.loadTransferable(type: Data.self) {
+                        model.attachImage(data)
+                    }
+                }
+            }
+        }
+        #if os(iOS)
+        .sheet(isPresented: $isShowingCamera) {
+            CameraPicker { data in model.attachImage(data) }
+                .ignoresSafeArea()
+        }
+        #endif
+    }
+
+    private var remainingImages: Int {
+        max(Self.maxImages - model.draftAttachments.count, 0)
+    }
+
+    private var attachMenu: some View {
+        Menu {
+            // A PhotosPicker inside a Menu does not present on iOS, so the menu opens it instead.
+            Button("Photo library", systemImage: "photo.on.rectangle") { isShowingPhotos = true }
+            #if os(iOS)
+            if CameraPicker.isAvailable {
+                Button("Take photo", systemImage: "camera") { isShowingCamera = true }
+            }
+            #endif
+        } label: {
+            Image(systemName: "plus")
+                .fontWeight(.semibold)
+                .frame(width: buttonSize, height: buttonSize)
+                .foregroundStyle(UnalomeColor.textSecondary)
+                .contentShape(Circle())
+        }
+        .menuIndicator(.hidden)
+        .disabled(model.isGenerating || remainingImages == 0)
+        .accessibilityLabel("Attach an image")
+    }
+
+    private var micButton: some View {
+        Button {
+            if voice.state == .idle {
+                let prefix = model.draft.trimmingCharacters(in: .whitespacesAndNewlines)
+                voice.onTranscript = { [model] text in
+                    let spoken = text.trimmingCharacters(in: .whitespaces)
+                    model.draft = prefix.isEmpty ? spoken : prefix + " " + spoken
+                }
+            }
+            voice.toggle()
+        } label: {
+            Image(systemName: voice.isRecording ? "mic.fill" : "mic")
+                .frame(width: buttonSize, height: buttonSize)
+                .foregroundStyle(voice.isRecording ? UnalomeColor.background : UnalomeColor.textSecondary)
+                .background(voice.isRecording ? UnalomeColor.error : .clear, in: Circle())
+                .contentShape(Circle())
+        }
+        .disabled(voice.state == .preparing)
+        .accessibilityLabel(voice.isRecording ? "Stop dictation" : "Dictate on this device")
+    }
+
+    private func send() {
+        if voice.isRecording {
+            Task {
+                await voice.stop()
+                model.send()
+            }
+        } else {
+            model.send()
+        }
+    }
+}
+
+/// A square, rounded thumbnail of a stored image, decoded off the main thread at display size.
+struct AttachmentThumbnail: View {
+    let url: URL
+    let side: CGFloat
+    @State private var image: CGImage?
+    @Environment(\.displayScale) private var displayScale
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: UnalomeRadius.control, style: .continuous)
+        ZStack {
+            UnalomeColor.glassFill
+            if let image {
+                Image(decorative: image, scale: displayScale)
+                    .resizable()
+                    .scaledToFill()
+            }
+        }
+        .frame(width: side, height: side)
+        .clipShape(shape)
+        .overlay { shape.strokeBorder(UnalomeColor.glassBorder, lineWidth: 1) }
+        .accessibilityLabel("Attached image")
+        .task(id: url) {
+            let pixels = Int(side * displayScale)
+            image = await Task.detached(priority: .userInitiated) {
+                ThumbnailDecoder.thumbnail(at: url, maxPixelSize: pixels)
+            }.value
+        }
+    }
+}
+
+/// The note above the first message the model still sees.
+private struct ContextLimitNote: View {
+    var body: some View {
+        HStack(spacing: 10) {
+            Rectangle().fill(UnalomeColor.glassBorder).frame(height: 1)
+            Text("Earlier messages are no longer seen by the model")
+                .unalomeText(.footnote)
+                .foregroundStyle(UnalomeColor.textTertiary)
+                .fixedSize()
+            Rectangle().fill(UnalomeColor.glassBorder).frame(height: 1)
+        }
+        .accessibilityElement(children: .combine)
     }
 }
 
 // MARK: - Model pill and loading
 
-/// The current model's name; opens a menu to switch models and, for models that can reason,
-/// to switch thinking on or off for this chat.
+/// The current model's name; opens a menu to switch models, to pick this chat's persona and,
+/// for models that can reason, to switch thinking on or off for this chat.
 private struct ModelPill: View {
     let services: AppServices
     @Bindable var model: ChatViewModel
+    let onManagePersonas: () -> Void
+    @Query(sort: \Persona.createdAt) private var personas: [Persona]
 
     var body: some View {
+        let options = services.engineOptions()
         Menu {
-            Section {
-                ForEach(services.engineOptions()) { option in
+            Section("Model") {
+                ForEach(options) { option in
                     Button {
                         Task { await services.select(option.choice) }
                     } label: {
@@ -364,6 +588,16 @@ private struct ModelPill: View {
                     }
                     .disabled(!option.isEnabled)
                 }
+            }
+            Section("Persona") {
+                Picker("Persona", selection: personaSelection(options: options)) {
+                    Text("None").tag(UUID?.none)
+                    ForEach(personas) { persona in
+                        Text(persona.name).tag(Optional(persona.id))
+                    }
+                }
+                .pickerStyle(.inline)
+                Button("Manage personas…", systemImage: "person.crop.square", action: onManagePersonas)
             }
             if model.supportsThinking {
                 Section {
@@ -380,7 +614,7 @@ private struct ModelPill: View {
                         .imageScale(.small)
                         .accessibilityHidden(true)
                 }
-                Text(services.host.engine.displayName)
+                Text(label)
                     .lineLimit(1)
                 Image(systemName: "chevron.down")
                     .imageScale(.small)
@@ -390,8 +624,32 @@ private struct ModelPill: View {
         .disabled(model.isGenerating)
         .accessibilityLabel(
             "Model: \(services.host.engine.displayName)"
+                + (model.persona.map { ", persona \($0.name)" } ?? "")
                 + (model.supportsThinking && model.isThinkingEnabled ? ", thinking on" : ""))
-        .accessibilityHint("Choose another model or switch thinking")
+        .accessibilityHint("Choose another model or persona, or switch thinking")
+    }
+
+    private var label: String {
+        if let persona = model.persona {
+            return "\(persona.name) · \(services.host.engine.displayName)"
+        }
+        return services.host.engine.displayName
+    }
+
+    /// Choosing a persona applies from the next reply and switches to its model, if it has one
+    /// that can be used here.
+    private func personaSelection(options: [EngineOption]) -> Binding<UUID?> {
+        Binding(
+            get: { model.persona?.id },
+            set: { id in
+                let persona = personas.first { $0.id == id }
+                model.persona = persona
+                if let raw = persona?.defaultModel, let choice = EngineChoice(rawValue: raw),
+                   choice != services.host.choice,
+                   options.contains(where: { $0.choice == choice && $0.isEnabled }) {
+                    Task { await services.select(choice) }
+                }
+            })
     }
 }
 

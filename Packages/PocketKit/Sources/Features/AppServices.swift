@@ -12,7 +12,7 @@ public final class AppPreferences {
         static let engine = "selectedEngine"
     }
 
-    @ObservationIgnored private let defaults: UserDefaults
+    @ObservationIgnored public let defaults: UserDefaults
 
     public var hasCompletedOnboarding: Bool {
         didSet { defaults.set(hasCompletedOnboarding, forKey: Key.onboarding) }
@@ -38,19 +38,23 @@ public struct AppServices {
     public let appleModelAvailability: @MainActor () -> AppleModelAvailability
     /// `false` in the Simulator, where downloaded models cannot run (MLX needs a real GPU).
     public let canRunLocalModels: Bool
+    /// Where attached images are stored; `nil` turns image input off.
+    public let attachments: AttachmentStore?
 
     public init(
         host: EngineHost,
         library: ModelLibrary,
         preferences: AppPreferences,
         appleModelAvailability: @escaping @MainActor () -> AppleModelAvailability,
-        canRunLocalModels: Bool
+        canRunLocalModels: Bool,
+        attachments: AttachmentStore? = nil
     ) {
         self.host = host
         self.library = library
         self.preferences = preferences
         self.appleModelAvailability = appleModelAvailability
         self.canRunLocalModels = canRunLocalModels
+        self.attachments = attachments
     }
 
     /// The engine to start with: the stored choice if it can still be used, otherwise an installed

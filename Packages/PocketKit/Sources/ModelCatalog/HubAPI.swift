@@ -77,15 +77,33 @@ public struct HubModelInfo: Decodable, Sendable, Equatable {
     public struct File: Decodable, Sendable, Equatable {
         public var path: String
         public var size: Int64?
+        /// SHA-256 of the file's content, published by the Hub for files stored with Git LFS
+        /// (the weights). Small Git files (configs, tokenizer) have none.
+        public var sha256: String?
 
         private enum CodingKeys: String, CodingKey {
             case path = "rfilename"
             case size
+            case lfs
         }
 
-        public init(path: String, size: Int64?) {
+        private struct LFS: Decodable {
+            var sha256: String?
+            var size: Int64?
+        }
+
+        public init(path: String, size: Int64?, sha256: String? = nil) {
             self.path = path
             self.size = size
+            self.sha256 = sha256
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            path = try container.decode(String.self, forKey: .path)
+            let lfs = try container.decodeIfPresent(LFS.self, forKey: .lfs)
+            size = try container.decodeIfPresent(Int64.self, forKey: .size) ?? lfs?.size
+            sha256 = lfs?.sha256?.lowercased()
         }
     }
 

@@ -36,6 +36,13 @@ public final class ChatViewModel {
     /// When the streaming reply started reasoning, for the "Thinking… N s" label.
     public private(set) var reasoningStartedAt: Date?
 
+    /// Images attached to the draft (file names in the attachment store), sent with the next message.
+    public private(set) var draftAttachments: [String] = []
+
+    /// The first message the model still saw in the latest reply, when older ones no longer fit
+    /// its context window. The chat shows a one-line note above it.
+    public private(set) var contextBoundaryMessageID: UUID?
+
     private struct Generation {
         let id: UUID
         let task: Task<Void, Never>
@@ -73,7 +80,60 @@ public final class ChatViewModel {
 
     var options: GenerationOptions {
         GenerationOptions(
-            temperature: temperature, maxTokens: maxTokens, thinking: supportsThinking && isThinkingEnabled)
+            temperature: persona?.temperature ?? temperature, maxTokens: maxTokens,
+            thinking: supportsThinking && isThinkingEnabled)
+    }
+
+    // MARK: Persona
+
+    private var personas: PersonaStore { PersonaStore(context: store.context) }
+
+    /// The chat's persona. Its prompt is the system turn of every reply from the next one on.
+    public var persona: Persona? {
+        get {
+            _ = personaRevision  // re-read after `persona` is set
+            return personas.persona(id: conversation.personaID)
+        }
+        set {
+            conversation.personaID = newValue?.id
+            personaRevision += 1
+            try? store.save()
+        }
+    }
+
+    private var personaRevision = 0
+
+    /// What the model is told before the conversation.
+    var systemTurns: [ChatTurn] {
+        guard let prompt = persona?.systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines), !prompt.isEmpty
+        else { return [] }
+        return [ChatTurn(role: .system, text: prompt)]
+    }
+
+    // MARK: Attachments
+
+    /// The engine accepts images.
+    public var supportsImages: Bool {
+        host.engine.capabilities.supportsVision && store.attachments != nil
+    }
+
+    public func url(forAttachment name: String) -> URL? {
+        store.attachments?.url(for: name)
+    }
+
+    /// Downscales and stores an image for the next message.
+    public func attachImage(_ data: Data) {
+        guard let attachments = store.attachments else { return }
+        do {
+            draftAttachments.append(try attachments.save(imageData: data))
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    public func removeDraftAttachment(_ name: String) {
+        draftAttachments.removeAll { $0 == name }
+        store.attachments?.delete([name])
     }
 
     /// The last reply was cut off at the length limit and can be continued.
@@ -87,7 +147,7 @@ public final class ChatViewModel {
     }
 
     public var canSend: Bool {
-        !isGenerating && !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        !isGenerating && (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !draftAttachments.isEmpty)
     }
 
     public var canRegenerate: Bool {
@@ -107,7 +167,10 @@ public final class ChatViewModel {
                 try store.save()
                 editingMessage = nil
             } else {
-                messages.append(try store.appendMessage(role: .user, text: text, to: conversation))
+                messages.append(
+                    try store.appendMessage(
+                        role: .user, text: text, attachmentNames: draftAttachments, to: conversation))
+                draftAttachments = []
             }
             draft = ""
             startGeneration()
@@ -145,21 +208,26 @@ public final class ChatViewModel {
         draft = ""
     }
 
+    /// Deletes images that were attached but never sent. Call when the chat closes.
+    public func discardDraftAttachments() {
+        store.attachments?.delete(draftAttachments)
+        draftAttachments = []
+    }
+
     /// Asks the model to carry on a reply that hit the length limit; the text is appended to it.
     public func continueReply() {
         guard canContinue, let reply = messages.last else { return }
         reply.stoppedAtLengthLimit = false
-        let history = messages.map(\.turn)
         let turn = ChatTurn(role: .user, text: "Continue exactly where you stopped, without repeating anything.")
-        run(turn: turn, history: history, into: reply)
+        run(turn: turn, history: fittedHistory(messages, turn: turn), into: reply)
     }
 
     // MARK: Generation
 
     private func startGeneration() {
-        let turns = messages.map(\.turn)
-        guard let turn = turns.last, turn.role == .user else { return }
-        let history = Array(turns.dropLast())
+        guard let last = messages.last, last.role == .user else { return }
+        let turn = last.turn(attachments: store.attachments)
+        let history = fittedHistory(Array(messages.dropLast()), turn: turn)
         let reply: Message
         do {
             reply = try store.appendMessage(role: .assistant, text: "", to: conversation)
@@ -169,6 +237,24 @@ public final class ChatViewModel {
         }
         messages.append(reply)
         run(turn: turn, history: history, into: reply)
+    }
+
+    /// The persona's system turn plus as much of `earlier` as fits the engine's context window
+    /// next to `turn` and the reply. Updates `contextBoundaryMessageID`.
+    private func fittedHistory(_ earlier: [Message], turn: ChatTurn) -> [ChatTurn] {
+        let fit = ContextWindow.fit(
+            history: systemTurns + earlier.map { $0.turn(attachments: store.attachments) },
+            turn: turn,
+            contextTokens: host.engine.capabilities.maxContextTokens,
+            replyTokens: options.maxTokens)
+        if fit.droppedCount == 0 {
+            contextBoundaryMessageID = nil
+        } else {
+            // The first message still seen, or the message being answered if none fit.
+            contextBoundaryMessageID = earlier.indices.contains(fit.droppedCount)
+                ? earlier[fit.droppedCount].id : messages.last { $0.role == .user }?.id
+        }
+        return fit.history
     }
 
     private func run(turn: ChatTurn, history: [ChatTurn], into reply: Message) {

@@ -14,6 +14,8 @@ public struct RootView: View {
     @State private var selection: Conversation?
     @State private var errorMessage: String?
     @State private var isShowingModels = false
+    @State private var isShowingPersonas = false
+    @State private var isShowingAbout = false
     private let services: AppServices
 
     public init(services: AppServices) {
@@ -33,16 +35,23 @@ public struct RootView: View {
         .tint(UnalomeColor.emerald)
         .preferredColorScheme(.dark)
         .task { await services.library.refreshCatalog() }
+        .task { prepareStores() }
         .modifier(KeepAwakeWhile(isActive: services.library.isDownloading))
     }
 
     private var conversations: some View {
-        let store = ConversationStore(context: context)
+        let store = ConversationStore(context: context, attachments: services.attachments)
         return NavigationSplitView {
             ConversationListView(selection: $selection, store: store)
                 .toolbar {
                     ToolbarItem(placement: .navigation) {
                         Button("Models", systemImage: "cpu") { isShowingModels = true }
+                    }
+                    ToolbarItem(placement: .navigation) {
+                        Menu("More", systemImage: "ellipsis.circle") {
+                            Button("Personas", systemImage: "person.crop.square") { isShowingPersonas = true }
+                            Button("About", systemImage: "info.circle") { isShowingAbout = true }
+                        }
                     }
                 }
         } detail: {
@@ -69,6 +78,26 @@ public struct RootView: View {
                     }
             }
         }
+        .sheet(isPresented: $isShowingPersonas) {
+            NavigationStack {
+                PersonasView(services: services)
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Done") { isShowingPersonas = false }
+                        }
+                    }
+            }
+        }
+        .sheet(isPresented: $isShowingAbout) {
+            NavigationStack {
+                AboutView(services: services)
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Done") { isShowingAbout = false }
+                        }
+                    }
+            }
+        }
         .alert(
             "Something went wrong",
             isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })
@@ -76,6 +105,18 @@ public struct RootView: View {
             Button("OK", role: .cancel) {}
         } message: {
             Text(errorMessage ?? "")
+        }
+    }
+}
+
+extension RootView {
+    /// Adds the starter personas on first launch and deletes images no message uses.
+    private func prepareStores() {
+        do {
+            try PersonaStore(context: context).seedOnce(defaults: services.preferences.defaults)
+            try ConversationStore(context: context, attachments: services.attachments).removeUnreferencedAttachments()
+        } catch {
+            errorMessage = error.localizedDescription
         }
     }
 }

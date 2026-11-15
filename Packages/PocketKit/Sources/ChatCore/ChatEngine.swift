@@ -42,10 +42,13 @@ public enum ChatRole: String, Sendable, Codable, CaseIterable {
 public struct ChatTurn: Sendable, Equatable {
     public var role: ChatRole
     public var text: String
+    /// Image files attached to this turn (user turns only). Engines without vision ignore them.
+    public var images: [URL]
 
-    public init(role: ChatRole, text: String) {
+    public init(role: ChatRole, text: String, images: [URL] = []) {
         self.role = role
         self.text = text
+        self.images = images
     }
 }
 

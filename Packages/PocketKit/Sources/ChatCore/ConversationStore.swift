@@ -6,9 +6,12 @@ import SwiftData
 @MainActor
 public struct ConversationStore {
     public let context: ModelContext
+    /// Where attached images live; their files are deleted with their messages.
+    public let attachments: AttachmentStore?
 
-    public init(context: ModelContext) {
+    public init(context: ModelContext, attachments: AttachmentStore? = nil) {
         self.context = context
+        self.attachments = attachments
     }
 
     /// A container holding the conversation models plus any `otherModels` (such as installed models).
@@ -17,7 +20,7 @@ public struct ConversationStore {
         including otherModels: [any PersistentModel.Type] = [],
         inMemory: Bool = false
     ) throws -> ModelContainer {
-        let schema = Schema([Conversation.self, Message.self] + otherModels)
+        let schema = Schema([Conversation.self, Message.self, Persona.self] + otherModels)
         let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: inMemory)
         return try ModelContainer(for: schema, configurations: configuration)
     }
@@ -42,8 +45,10 @@ public struct ConversationStore {
     }
 
     public func delete(_ conversation: Conversation) throws {
+        let names = conversation.messages.flatMap(\.attachmentNames)
         context.delete(conversation)
         try context.save()
+        attachments?.delete(names)
     }
 
     /// Conversations whose title or any message contains `query`, most recent first.
@@ -70,10 +75,13 @@ public struct ConversationStore {
     /// Appends a message. The first user message of a conversation with an automatic title
     /// also sets the title.
     @discardableResult
-    public func appendMessage(role: ChatRole, text: String, to conversation: Conversation) throws -> Message {
+    public func appendMessage(
+        role: ChatRole, text: String, attachmentNames: [String] = [], to conversation: Conversation
+    ) throws -> Message {
         let existing = conversation.messages
         let position = (existing.map(\.position).max() ?? -1) + 1
         let message = Message(role: role, text: text, position: position)
+        message.attachmentNames = attachmentNames
         context.insert(message)
         message.conversation = conversation
 
@@ -87,10 +95,22 @@ public struct ConversationStore {
 
     /// Removes messages, e.g. a reply that is about to be regenerated.
     public func deleteMessages(_ messages: [Message]) throws {
+        let names = messages.flatMap(\.attachmentNames)
         for message in messages {
             context.delete(message)
         }
         try context.save()
+        attachments?.delete(names)
+    }
+
+    /// Deletes attachment files no message refers to: images attached to a draft that was
+    /// never sent, or left behind if the app stopped between saving a file and its message.
+    public func removeUnreferencedAttachments() throws {
+        guard let attachments else { return }
+        let files = (try? FileManager.default.contentsOfDirectory(atPath: attachments.directory.path)) ?? []
+        guard !files.isEmpty else { return }
+        let referenced = Set(try context.fetch(FetchDescriptor<Message>()).flatMap(\.attachmentNames))
+        attachments.delete(files.filter { !referenced.contains($0) })
     }
 
     /// Persists in-place edits such as streamed text.

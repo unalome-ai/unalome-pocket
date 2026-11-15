@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import Synchronization
 
@@ -20,6 +21,7 @@ public enum DownloadError: LocalizedError, Equatable {
     case badStatus(Int)
     case sizeMismatch(file: String)
     case unsafePath(String)
+    case checksumMismatch(file: String)
 
     public var errorDescription: String? {
         switch self {
@@ -31,6 +33,8 @@ public enum DownloadError: LocalizedError, Equatable {
             "\(file) did not download completely. Try again."
         case .unsafePath(let path):
             "The model contains an unexpected file path: \(path)"
+        case .checksumMismatch(let file):
+            "\(file) arrived damaged (its checksum does not match the one Hugging Face publishes) and was deleted. Try the download again."
         }
     }
 }
@@ -106,6 +110,13 @@ public final class ModelDownloader: Sendable {
             if let expected = file.size, size != expected {
                 throw DownloadError.sizeMismatch(file: file.path)
             }
+            if let expected = file.sha256 {
+                try Task.checkCancellation()
+                guard try Self.sha256(of: target) == expected else {
+                    try? FileManager.default.removeItem(at: target)
+                    throw DownloadError.checksumMismatch(file: file.path)
+                }
+            }
             finishedBytes += size
             reporter.update(finishedBytes)
         }
@@ -119,6 +130,20 @@ public final class ModelDownloader: Sendable {
             at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
         try FileManager.default.moveItem(at: partial, to: destination)
         return destination
+    }
+
+    /// Lowercase hex SHA-256 of a file, read in 4 MB chunks so a multi-gigabyte weights file
+    /// never sits in memory.
+    static func sha256(of file: URL) throws -> String {
+        let handle = try FileHandle(forReadingFrom: file)
+        defer { try? handle.close() }
+        var hasher = SHA256()
+        while true {
+            let chunk = try autoreleasepool { try handle.read(upToCount: 4 << 20) }
+            guard let chunk, !chunk.isEmpty else { break }
+            hasher.update(data: chunk)
+        }
+        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
     }
 
     /// Repo-relative paths only: no absolute paths, no `..`.

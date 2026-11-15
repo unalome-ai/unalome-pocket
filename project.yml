@@ -43,9 +43,11 @@ targets:
       Release: Config/Base.xcconfig
     settings:
       base:
-        # The increased-memory-limit entitlement exists only on iOS; macOS gets no entitlements yet.
+        # The increased-memory-limit entitlement exists only on iOS.
         CODE_SIGN_ENTITLEMENTS[sdk=iphoneos*]: App/UnalomePocket-iOS.entitlements
         CODE_SIGN_ENTITLEMENTS[sdk=iphonesimulator*]: App/UnalomePocket-iOS.entitlements
+        # Hardened runtime on macOS needs this to use the microphone for dictation.
+        CODE_SIGN_ENTITLEMENTS[sdk=macosx*]: App/UnalomePocket-macOS.entitlements
         PRODUCT_BUNDLE_IDENTIFIER: ai.unalome.pocket
         PRODUCT_NAME: UnalomePocket
         TARGETED_DEVICE_FAMILY: "1,2"
@@ -60,7 +62,14 @@ targets:
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         ITSAppUsesNonExemptEncryption: false
         LSApplicationCategoryType: public.app-category.productivity
-        UILaunchScreen: {}
+        UILaunchScreen:
+          UIColorName: LaunchBackground
+          UIImageName: LaunchMark
+          UIImageRespectsSafeAreaInsets: true
+        NSCameraUsageDescription: Take a photo to ask the model about. The photo stays on this device.
+        NSPhotoLibraryUsageDescription: Choose a photo to ask the model about. It stays on this device.
+        NSMicrophoneUsageDescription: Dictate messages. Speech is turned into text on this device and is never sent anywhere.
+        NSSpeechRecognitionUsageDescription: Dictate messages with on-device speech recognition. Nothing is sent to a server.
         UIUserInterfaceStyle: Dark
         UIApplicationSceneManifest:
           # One window: two windows on one conversation would stream two replies into it.

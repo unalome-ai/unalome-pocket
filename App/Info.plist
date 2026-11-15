@@ -24,13 +24,28 @@
 	<false/>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.productivity</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Take a photo to ask the model about. The photo stays on this device.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Dictate messages. Speech is turned into text on this device and is never sent anywhere.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Choose a photo to ask the model about. It stays on this device.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Dictate messages with on-device speech recognition. Nothing is sent to a server.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
 		<false/>
 	</dict>
 	<key>UILaunchScreen</key>
-	<dict/>
+	<dict>
+		<key>UIColorName</key>
+		<string>LaunchBackground</string>
+		<key>UIImageName</key>
+		<string>LaunchMark</string>
+		<key>UIImageRespectsSafeAreaInsets</key>
+		<true/>
+	</dict>
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>

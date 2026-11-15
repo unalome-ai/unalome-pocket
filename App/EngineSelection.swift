@@ -25,7 +25,8 @@ enum EngineSelection {
             if isSimulator {
                 return ScriptedEngine()
             }
-            let name = library.installedModel(id: repoID)?.displayName ?? repoID
+            let installed = library.installedModel(id: repoID)
+            let name = installed?.displayName ?? repoID
             // Thinking support and reasoning delimiters come from the catalog; models added by
             // ID get neither, but `<think>` blocks are still kept out of the reply.
             let entry = library.entry(id: repoID)
@@ -34,6 +35,9 @@ enum EngineSelection {
                 directory: storage.directory(for: repoID),
                 displayName: name,
                 supportsThinking: entry?.supportsThinking ?? false,
+                // Image input only for models the catalog (or the Hub tags, for models added by
+                // ID) marks as vision-capable; MLXVLM loads them when an image is first sent.
+                supportsVision: entry?.supportsVision ?? installed?.supportsVision ?? false,
                 reasoningTags: tags)
         }
     }

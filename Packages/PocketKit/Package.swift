@@ -37,6 +37,7 @@ let package = Package(
                 "ChatCore",
                 .product(name: "MLX", package: "mlx-swift"),
                 .product(name: "MLXLLM", package: "mlx-swift-lm"),
+                .product(name: "MLXVLM", package: "mlx-swift-lm"),
                 .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
                 .product(name: "Tokenizers", package: "swift-transformers"),
             ]
@@ -56,7 +57,11 @@ let package = Package(
         .testTarget(name: "ModelCatalogTests", dependencies: ["ModelCatalog"]),
         .testTarget(
             name: "MLXEngineTests",
-            dependencies: ["MLXEngine", "ChatCore", "ModelCatalog", .product(name: "MLX", package: "mlx-swift")]
+            dependencies: [
+                "MLXEngine", "ChatCore", "ModelCatalog", .product(name: "MLX", package: "mlx-swift"),
+                .product(name: "MLXLLM", package: "mlx-swift-lm"),
+                .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
+            ]
         ),
         .testTarget(name: "FeaturesTests", dependencies: ["Features", "ChatCore", "ModelCatalog"]),
     ],

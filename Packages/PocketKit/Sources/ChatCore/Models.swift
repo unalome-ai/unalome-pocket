@@ -12,6 +12,9 @@ public final class Conversation {
     public var updatedAt: Date
     /// Whether replies in this chat may reason first (for models that support it). Off by default.
     public var isThinkingEnabled: Bool = false
+    /// The persona whose prompt and temperature this chat uses; `nil` for none.
+    /// An id rather than a relationship, so deleting a persona leaves chats intact.
+    public var personaID: UUID?
 
     @Relationship(deleteRule: .cascade, inverse: \Message.conversation)
     public var messages: [Message] = []
@@ -46,6 +49,8 @@ public final class Message {
     public var reasoningSeconds: Double?
     /// The reply was cut off at the length limit and can be continued.
     public var stoppedAtLengthLimit: Bool = false
+    /// Attached images, as file names in the `AttachmentStore`.
+    public var attachmentNames: [String] = []
     public var createdAt: Date
     /// Insertion order within the conversation.
     public var position: Int
@@ -59,8 +64,41 @@ public final class Message {
         self.createdAt = createdAt
     }
 
-    /// What the engine sees: the text only. Reasoning stays out of the history.
+    /// What the engine sees: the text (and images) only. Reasoning stays out of the history.
+    public func turn(attachments: AttachmentStore?) -> ChatTurn {
+        ChatTurn(role: role, text: text, images: attachments.map { store in attachmentNames.map(store.url(for:)) } ?? [])
+    }
+
+    /// The text-only turn.
     public var turn: ChatTurn {
         ChatTurn(role: role, text: text)
+    }
+}
+
+/// A reusable set of instructions and settings for a chat ("Writing editor", "Coder" …).
+@Model
+public final class Persona {
+    @Attribute(.unique) public var id: UUID
+    public var name: String
+    /// Sent to the model as the system turn.
+    public var systemPrompt: String
+    public var temperature: Double
+    /// `EngineChoice.rawValue` of the model to switch to when the persona is picked, if any.
+    public var defaultModel: String?
+    /// Set for the built-in starters, so they can be restored.
+    public var starterKey: String?
+    public var createdAt: Date
+
+    public init(
+        id: UUID = UUID(), name: String, systemPrompt: String, temperature: Double = 0.7,
+        defaultModel: String? = nil, starterKey: String? = nil, createdAt: Date = .now
+    ) {
+        self.id = id
+        self.name = name
+        self.systemPrompt = systemPrompt
+        self.temperature = temperature
+        self.defaultModel = defaultModel
+        self.starterKey = starterKey
+        self.createdAt = createdAt
     }
 }

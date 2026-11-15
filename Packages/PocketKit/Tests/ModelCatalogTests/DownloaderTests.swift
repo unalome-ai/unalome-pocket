@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import Synchronization
 import Testing
@@ -18,12 +19,18 @@ private struct FakeRepo {
             license: .init(name: "Test", url: nil), goodFor: "Tests", tier: .small, qualityRank: 1)
     }
 
-    static func info(extraFile: String? = nil, weightsSize: Int? = nil) -> String {
+    static var weightsSHA256: String {
+        SHA256.hash(data: weights).map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// `weightsSHA256` adds the LFS metadata the Hub returns with `?blobs=true`.
+    static func info(extraFile: String? = nil, weightsSize: Int? = nil, weightsSHA256: String? = nil) -> String {
         let extra = extraFile.map { #", {"rfilename": "\#($0)", "size": 1}"# } ?? ""
+        let lfs = weightsSHA256.map { #", "lfs": {"sha256": "\#($0)", "size": \#(weightsSize ?? weights.count), "pointerSize": 134}"# } ?? ""
         return """
             {"sha": "\(revision)", "tags": ["mlx"], "siblings": [
               {"rfilename": "config.json", "size": \(config.count)},
-              {"rfilename": "model.safetensors", "size": \(weightsSize ?? weights.count)},
+              {"rfilename": "model.safetensors", "size": \(weightsSize ?? weights.count)\(lfs)},
               {"rfilename": "README.md", "size": 10}\(extra)
             ]}
             """
@@ -176,6 +183,36 @@ struct DownloaderTests {
             try await downloader.download(FakeRepo.entry) { _ in }
         }
         #expect(!storage.isInstalled(FakeRepo.repoID))
+    }
+
+    @Test func verifiesTheHubChecksum() async throws {
+        let server = FakeRepo.server(info: FakeRepo.info(weightsSHA256: FakeRepo.weightsSHA256))
+        let (downloader, storage) = try makeDownloader(server)
+        let folder = try await downloader.download(FakeRepo.entry) { _ in }
+        #expect(storage.isInstalled(FakeRepo.repoID))
+        #expect(try ModelDownloader.sha256(of: folder.appending(path: "model.safetensors")) == FakeRepo.weightsSHA256)
+    }
+
+    @Test func deletesAFileWhoseChecksumDoesNotMatch() async throws {
+        // Right size, wrong content: only the checksum can tell.
+        let damaged = {
+            var bytes = FakeRepo.weights
+            bytes[100] ^= 0xFF
+            return bytes
+        }()
+        let server = FakeRepo.server(
+            info: FakeRepo.info(weightsSHA256: FakeRepo.weightsSHA256),
+            weightsResponse: { .file(damaged, for: $0) })
+        let (downloader, storage) = try makeDownloader(server)
+
+        await #expect(throws: DownloadError.checksumMismatch(file: "model.safetensors")) {
+            try await downloader.download(FakeRepo.entry) { _ in }
+        }
+        #expect(!storage.isInstalled(FakeRepo.repoID))
+        let partialWeights = storage.partialDirectory(for: FakeRepo.repoID).appending(path: "model.safetensors")
+        #expect(!FileManager.default.fileExists(atPath: partialWeights.path))
+        let message = DownloadError.checksumMismatch(file: "model.safetensors").errorDescription ?? ""
+        #expect(message.contains("model.safetensors") && message.contains("deleted"))
     }
 
     @Test func reportsServerErrors() async throws {

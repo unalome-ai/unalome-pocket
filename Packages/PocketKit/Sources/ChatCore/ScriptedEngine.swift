@@ -4,7 +4,7 @@ import Foundation
 /// Used in the Simulator, in previews and in tests, where MLX cannot run.
 public struct ScriptedEngine: ChatEngine {
     public let displayName = "Scripted demo"
-    public let capabilities = EngineCapabilities(supportsVision: false, maxContextTokens: 4096, supportsThinking: true)
+    public let capabilities: EngineCapabilities
 
     private let replies: [String]
     private let tokenDelay: Duration
@@ -12,9 +12,17 @@ public struct ScriptedEngine: ChatEngine {
     /// - Parameters:
     ///   - replies: Canned replies, used in turn. An empty list uses the defaults.
     ///   - tokenDelay: Pause before each token. The default gives roughly 28 tok/s.
-    public init(replies: [String] = ScriptedEngine.defaultReplies, tokenDelay: Duration = .milliseconds(35)) {
+    ///   - maxContextTokens: The context window it reports (tests use a small one).
+    public init(
+        replies: [String] = ScriptedEngine.defaultReplies,
+        tokenDelay: Duration = .milliseconds(35),
+        maxContextTokens: Int = 4096
+    ) {
         self.replies = replies.isEmpty ? ScriptedEngine.defaultReplies : replies
         self.tokenDelay = tokenDelay
+        // Accepts images so the attachment flow can be tried in the Simulator; it cannot see them.
+        self.capabilities = EngineCapabilities(
+            supportsVision: true, maxContextTokens: maxContextTokens, supportsThinking: true)
     }
 
     public func load(progress: @Sendable (Double) -> Void) async throws {
@@ -32,6 +40,9 @@ public struct ScriptedEngine: ChatEngine {
         // and regenerating the same turn is deterministic.
         let userTurnsBefore = history.count { $0.role == .user }
         var script = replies[userTurnsBefore % replies.count]
+        if !turn.images.isEmpty {
+            script = "*The scripted demo cannot look at images; a vision model on a device can.*\n\n" + script
+        }
         if options.thinking {
             // Like a reasoning model: thoughts in <think> tags, split out as they stream.
             script = "<think>\n\(Self.reasoning)\n</think>\n\n" + script
