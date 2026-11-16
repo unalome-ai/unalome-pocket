@@ -261,6 +261,9 @@ struct MLXIntegrationTests {
         let directory = try await Self.installedModel()
         let entry = try #require(try CatalogLoader.bundled().models.first { $0.id == Self.modelID })
         #expect(entry.supportsVision)
+        // MLX keeps some global state from earlier tests in this process; measure from here.
+        MLX.Memory.clearCache()
+        let baseline = MLX.Memory.activeMemory
         let engine = MLXChatEngine(
             directory: directory, displayName: "Qwen 3.5 0.8B", supportsThinking: true, supportsVision: true)
         try await engine.load { _ in }
@@ -268,6 +271,7 @@ struct MLXIntegrationTests {
         let text = try await Self.collect(engine, "Say hello in three words.", options: GenerationOptions(temperature: 0))
         Self.report("vision model, text only", text)
         #expect(!engine.isUsingVisionModel, "text-only chats stay on the text model")
+        let textModelBytes = MLX.Memory.activeMemory - baseline
 
         let image = try Self.testImage()
         let question = "What is in this picture? Name the shape and its colour, and the background colour."
@@ -275,6 +279,10 @@ struct MLXIntegrationTests {
             engine, question, images: [image], options: GenerationOptions(temperature: 0, maxTokens: 200))
         Self.report("image", answer)
         #expect(engine.isUsingVisionModel)
+        // The text model was released before the vision model loaded: phones cannot hold both.
+        let beforeVisionLoad = try #require(engine.activeBytesBeforeVisionLoad) - baseline
+        print("MLX integration [image]: text model \(textModelBytes >> 20) MB, active before the vision load \(beforeVisionLoad >> 20) MB")
+        #expect(beforeVisionLoad < textModelBytes / 4)
         #expect(!answer.text.isEmpty)
         #expect(answer.text.localizedCaseInsensitiveContains("red"))
 
@@ -284,6 +292,63 @@ struct MLXIntegrationTests {
             history: [ChatTurn(role: .user, text: question, images: [image]), ChatTurn(role: .assistant, text: answer.text)],
             options: GenerationOptions(temperature: 0, maxTokens: 20))
         Self.report("image follow-up", followUp)
+        await engine.unload()
+    }
+
+    /// When the vision model does not fit, an image fails with the guard's message and the text
+    /// model stays loaded; a chat whose earlier messages have images is answered from the text.
+    @Test(.timeLimit(.minutes(10)))
+    func refusesImagesWhenTheVisionModelDoesNotFit() async throws {
+        let directory = try await Self.installedModel()
+        let message = "This model needs more memory than this device has free to read images. Try Qwen 3.5 2B."
+        let engine = MLXChatEngine(
+            directory: directory, displayName: "Qwen 3.5 0.8B", supportsThinking: true, supportsVision: true,
+            imageGuard: MLXChatEngine.ImageMemoryGuard(requiredBytes: 64 << 30, tooLargeMessage: message) { 1 << 30 })
+        try await engine.load { _ in }
+        let image = try Self.testImage()
+        await #expect(throws: MLXChatEngine.EngineError.imageNeedsMoreMemory(message)) {
+            _ = try await Self.collect(engine, "What is this?", images: [image], options: GenerationOptions(temperature: 0, maxTokens: 20))
+        }
+        #expect(MLXChatEngine.EngineError.imageNeedsMoreMemory(message).localizedDescription == message)
+        #expect(!engine.isUsingVisionModel)
+
+        let followUp = try await Self.collect(
+            engine, "Say hello in three words.",
+            history: [ChatTurn(role: .user, text: "What is this?", images: [image]), ChatTurn(role: .assistant, text: "A red circle.")],
+            options: GenerationOptions(temperature: 0, maxTokens: 20))
+        #expect(!followUp.text.isEmpty)
+        #expect(!engine.isUsingVisionModel)
+        await engine.unload()
+    }
+
+    /// A memory warning during a reply stops it with an error that says why.
+    @Test(.timeLimit(.minutes(10)))
+    func memoryWarningStopsTheReplyWithAReason() async throws {
+        let directory = try await Self.installedModel()
+        let engine = MLXChatEngine(directory: directory, displayName: "Qwen 3.5 0.8B", supportsThinking: true)
+        try await engine.load { _ in }
+        let stream = engine.reply(
+            to: ChatTurn(role: .user, text: "Count from 1 to 500."), history: [],
+            options: GenerationOptions(temperature: 0))
+        var tokens = 0
+        var stopError: (any Error)?
+        var warned = false
+        do {
+            for try await event in stream {
+                if case .token = event { tokens += 1 }
+                if tokens >= 3, !warned {
+                    warned = true
+                    Task { await engine.unloadForMemoryWarning() }
+                }
+            }
+        } catch {
+            stopError = error
+        }
+        #expect(stopError as? MLXChatEngine.EngineError == .stoppedForMemory)
+        // The next load starts clean: replies are not reported as memory stops.
+        try await engine.load { _ in }
+        let after = try await Self.collect(engine, "Hi", options: GenerationOptions(temperature: 0, maxTokens: 4))
+        #expect(!after.text.isEmpty)
         await engine.unload()
     }
 

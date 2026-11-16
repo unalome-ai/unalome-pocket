@@ -13,6 +13,26 @@ public final class ModelLibrary {
         case failed(String)
     }
 
+    /// What happened to a download, for observers such as the Live Activity.
+    public enum DownloadEvent: Sendable {
+        case started(CatalogEntry)
+        case changed(repoID: String, DownloadState)
+        case finished(CatalogEntry)
+        /// Discarded by the user: the bytes are gone.
+        case removed(repoID: String)
+    }
+
+    @ObservationIgnored private var downloadObservers: [@MainActor (DownloadEvent) -> Void] = []
+
+    /// Calls `handler` for every download event from now on.
+    public func observeDownloads(_ handler: @escaping @MainActor (DownloadEvent) -> Void) {
+        downloadObservers.append(handler)
+    }
+
+    private func emit(_ event: DownloadEvent) {
+        for observer in downloadObservers { observer(event) }
+    }
+
     /// The SwiftData models this library stores; add them to the app's container.
     public static var persistentModels: [any PersistentModel.Type] { [InstalledModel.self] }
 
@@ -139,6 +159,7 @@ public final class ModelLibrary {
     public func download(_ entry: CatalogEntry, licenseAcceptedAt: Date = .now) {
         guard tasks[entry.id] == nil, !storage.isInstalled(entry.id) else { return }
         downloads[entry.id] = .downloading(currentProgress(entry.id))
+        emit(.started(entry))
         let downloader = downloader
         // The library lives as long as the app, so the task holds it strongly.
         tasks[entry.id] = Task {
@@ -165,6 +186,7 @@ public final class ModelLibrary {
         tasks[repoID]?.cancel()
         tasks[repoID] = nil
         downloads[repoID] = nil
+        emit(.removed(repoID: repoID))
         try? storage.deletePartial(repoID)
         storageUsedBytes = storage.totalBytes()
     }
@@ -172,6 +194,7 @@ public final class ModelLibrary {
     private func update(_ repoID: String, _ progress: DownloadProgress) {
         guard case .downloading = downloads[repoID] else { return }
         downloads[repoID] = .downloading(progress)
+        emit(.changed(repoID: repoID, .downloading(progress)))
     }
 
     private func currentProgress(_ repoID: String) -> DownloadProgress? {
@@ -182,8 +205,11 @@ public final class ModelLibrary {
     }
 
     private func endDownload(_ repoID: String, as state: DownloadState) {
+        // Discarded: `discard` already cleared the task and the state.
+        guard tasks[repoID] != nil else { return }
         tasks[repoID] = nil
         downloads[repoID] = state
+        emit(.changed(repoID: repoID, state))
         storageUsedBytes = storage.totalBytes()
     }
 
@@ -196,6 +222,7 @@ public final class ModelLibrary {
         }
         addedEntries.removeAll { $0.id == entry.id }
         reloadInstalled()
+        emit(.finished(entry))
     }
 
     // MARK: Add by ID

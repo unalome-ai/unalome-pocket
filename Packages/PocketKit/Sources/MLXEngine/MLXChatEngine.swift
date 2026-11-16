@@ -22,11 +22,52 @@ import Synchronization
 ///
 /// Conversations with images go through MLXVLM and `ChatSession` and are processed in full.
 public final class MLXChatEngine: ChatEngine {
-    public enum EngineError: LocalizedError {
+    public enum EngineError: LocalizedError, Equatable {
         case notLoaded
+        /// The vision model does not fit in the memory free now. The text model stays loaded.
+        case imageNeedsMoreMemory(String)
+        /// The vision model failed to load; the text model was loaded again.
+        case visionModelFailed(String)
+        /// Stopped because the system ran low on memory.
+        case stoppedForMemory
 
         public var errorDescription: String? {
-            "The model is not loaded yet."
+            switch self {
+            case .notLoaded: "The model is not loaded yet."
+            case .imageNeedsMoreMemory(let message): message
+            case .visionModelFailed(let reason):
+                "Could not load the model's image reader (\(reason)). Text chat still works."
+            case .stoppedForMemory:
+                "Stopped to free memory: the device was running low. Send the message again to retry."
+            }
+        }
+    }
+
+    /// When images may be read: the vision model's memory need and what to say when it does
+    /// not fit.
+    public struct ImageMemoryGuard: Sendable {
+        /// Memory the vision model needs during an image turn (the catalog's measured figure).
+        public var requiredBytes: Int64
+        /// Shown when it does not fit, e.g. naming smaller vision models.
+        public var tooLargeMessage: String
+        /// Memory the process may still allocate. `nil` means unknown (macOS): no check.
+        public var availableBytes: @Sendable () -> Int64?
+
+        public init(requiredBytes: Int64, tooLargeMessage: String) {
+            self.init(requiredBytes: requiredBytes, tooLargeMessage: tooLargeMessage) { ProcessMemory.availableBytes() }
+        }
+
+        init(requiredBytes: Int64, tooLargeMessage: String, availableBytes: @escaping @Sendable () -> Int64?) {
+            self.requiredBytes = requiredBytes
+            self.tooLargeMessage = tooLargeMessage
+            self.availableBytes = availableBytes
+        }
+
+        /// Whether the vision model fits once `releasableBytes` (the text model and the MLX
+        /// cache) are freed.
+        func fits(releasableBytes: Int64) -> Bool {
+            guard let available = availableBytes() else { return true }
+            return available + releasableBytes >= requiredBytes
         }
     }
 
@@ -37,6 +78,8 @@ public final class MLXChatEngine: ChatEngine {
     private let gpuCacheLimitBytes: Int
     private let reasoningTags: ReasoningTags
     private let reusesConversation: Bool
+    private let maxImageDimension: Int?
+    private let imageGuard: ImageMemoryGuard?
     private let state = Mutex(State())
 
     private struct State {
@@ -52,6 +95,12 @@ public final class MLXChatEngine: ChatEngine {
         var primedInside: [Bool: Bool] = [:]
         /// Prompt processing of the latest reply. For tests.
         var lastPrompt: PromptStats?
+        /// MLX active memory just before the vision model started loading. For tests.
+        var activeBytesBeforeVisionLoad: Int?
+        /// Bumped by `unload()`, so a model switch that finishes afterwards stores nothing.
+        var epoch = 0
+        /// `unload()` ran because memory was low; replies it stopped say so.
+        var unloadedForMemory = false
     }
 
     /// How much of a prompt was processed and how much came from the kept cache.
@@ -79,8 +128,12 @@ public final class MLXChatEngine: ChatEngine {
         reasoningTags: ReasoningTags = .think,
         maxContextTokens: Int = 8192,
         gpuCacheLimitBytes: Int = 256 << 20,
-        reusesConversation: Bool = true
+        reusesConversation: Bool = true,
+        maxImageDimension: Int? = nil,
+        imageGuard: ImageMemoryGuard? = nil
     ) {
+        self.maxImageDimension = maxImageDimension
+        self.imageGuard = imageGuard
         self.directory = directory
         self.displayName = displayName
         self.capabilities = EngineCapabilities(
@@ -98,6 +151,7 @@ public final class MLXChatEngine: ChatEngine {
             return
         }
         progress(0)
+        state.withLock { $0.unloadedForMemory = false }
         MLX.Memory.cacheLimit = gpuCacheLimitBytes
         // Measure this model's peak from here on (the setter resets the counter).
         MLX.Memory.peakMemory = 0
@@ -112,33 +166,82 @@ public final class MLXChatEngine: ChatEngine {
     }
 
     /// The loaded container, switched to the vision model first when `vision` is needed.
+    ///
+    /// Phones cannot hold the text and vision models at once, so the text model is released
+    /// completely before the vision model loads: nothing here keeps a reference to it.
     private func container(vision: Bool) async throws -> (ModelContainer, isVision: Bool) {
-        let (current, isVision) = state.withLock { ($0.container, $0.isVisionContainer) }
-        guard let current else { throw EngineError.notLoaded }
-        guard vision, !isVision else { return (current, isVision) }
-        // Free the text model before loading the vision one; phones cannot hold both.
-        state.withLock {
-            $0.container = nil
-            $0.prefix = nil
+        let loaded: (ModelContainer, Bool)? = state.withLock { state in
+            guard let container = state.container else { return nil }
+            return vision && !state.isVisionContainer ? nil : (container, state.isVisionContainer)
+        }
+        if let loaded { return loaded }
+        guard state.withLock({ $0.container != nil }) else { throw EngineError.notLoaded }
+
+        if let imageGuard {
+            let releasable = Int64(MLX.Memory.activeMemory + MLX.Memory.cacheMemory)
+            guard imageGuard.fits(releasableBytes: releasable) else {
+                throw EngineError.imageNeedsMoreMemory(imageGuard.tooLargeMessage)
+            }
+        }
+        // Drop the text model and the kept cache: the last references, so their arrays free now.
+        let epoch = state.withLock { state in
+            state.container = nil
+            state.prefix = nil
+            return state.epoch
         }
         MLX.Memory.clearCache()
-        let loaded = try await VLMModelFactory.shared.loadContainer(
-            from: directory, using: TransformersTokenizerLoader())
-        try Task.checkCancellation()
-        state.withLock {
-            $0.container = loaded
-            $0.isVisionContainer = true
+        state.withLock { $0.activeBytesBeforeVisionLoad = MLX.Memory.activeMemory }
+        do {
+            let visionContainer = try await VLMModelFactory.shared.loadContainer(
+                from: directory, using: TransformersTokenizerLoader())
+            guard store(visionContainer, isVision: true, epoch: epoch) else { throw CancellationError() }
+            try Task.checkCancellation()
+            return (visionContainer, true)
+        } catch let error as CancellationError {
+            throw error
+        } catch {
+            // Keep the chat working: bring the text model back (unless the engine was unloaded).
+            MLX.Memory.clearCache()
+            if state.withLock({ $0.epoch == epoch }),
+                let text = try? await LLMModelFactory.shared.loadContainer(
+                    from: directory, using: TransformersTokenizerLoader())
+            {
+                store(text, isVision: false, epoch: epoch)
+            }
+            throw EngineError.visionModelFailed(error.localizedDescription)
         }
-        return (loaded, true)
+    }
+
+    /// Makes `container` the loaded model unless `unload()` ran since `epoch`.
+    @discardableResult
+    private func store(_ container: ModelContainer, isVision: Bool, epoch: Int) -> Bool {
+        state.withLock { state in
+            guard state.epoch == epoch else { return false }
+            state.container = container
+            state.isVisionContainer = isVision
+            return true
+        }
     }
 
     /// Stops any reply in flight, frees the model and its kept cache, and returns cached GPU memory.
     public func unload() async {
+        await unload(forMemory: false)
+    }
+
+    /// Frees the model because the system is low on memory. A reply in flight stops and ends
+    /// with `EngineError.stoppedForMemory`, so the chat says why.
+    public func unloadForMemoryWarning() async {
+        await unload(forMemory: true)
+    }
+
+    private func unload(forMemory: Bool) async {
         let replies = state.withLock { state in
             let replies = Array(state.replies.values)
             state.replies = [:]
             state.container = nil
             state.prefix = nil
+            state.epoch += 1
+            state.unloadedForMemory = forMemory && !replies.isEmpty
             return replies
         }
         for reply in replies {
@@ -156,21 +259,32 @@ public final class MLXChatEngine: ChatEngine {
         options: GenerationOptions
     ) -> AsyncThrowingStream<GenerationEvent, Error> {
         AsyncThrowingStream { continuation in
-            let request = Request(
+            let initialRequest = Request(
                 turn: turn, history: history, options: options,
                 thinking: options.thinking && capabilities.supportsThinking,
                 tags: reasoningTags,
                 vision: capabilities.supportsVision)
             let id = UUID()
             let task = Task { [weak self] in
+                var request = initialRequest
                 do {
                     guard let self else { throw EngineError.notLoaded }
-                    let (container, isVision) = try await self.container(vision: request.hasImages)
+                    let container: ModelContainer
+                    let isVision: Bool
+                    do {
+                        (container, isVision) = try await self.container(vision: request.hasImages)
+                    } catch EngineError.imageNeedsMoreMemory where request.turn.images.isEmpty {
+                        // Only earlier messages have images: answer from the text without them
+                        // rather than failing every turn of this chat.
+                        request.vision = false
+                        (container, isVision) = try await self.container(vision: false)
+                    }
                     let primed = try await self.promptEndsInsideReasoning(container: container, request: request)
                     var output = Output(continuation: continuation, tags: request.tags, primedInside: primed)
                     let prompt: PromptStats?
                     if isVision {
-                        prompt = try await Self.generateWithSession(container: container, request: request, output: &output)
+                        prompt = try await Self.generateWithSession(
+                            container: container, request: request, maxImageDimension: self.maxImageDimension, output: &output)
                     } else {
                         prompt = try await self.generateReusingPrefix(container: container, request: request, output: &output)
                     }
@@ -179,7 +293,8 @@ public final class MLXChatEngine: ChatEngine {
                     continuation.yield(.done)
                     continuation.finish()
                 } catch {
-                    continuation.finish(throwing: error)
+                    let forMemory = self?.state.withLock { $0.unloadedForMemory } ?? false
+                    continuation.finish(throwing: forMemory ? EngineError.stoppedForMemory : error)
                 }
                 _ = self?.state.withLock { $0.replies.removeValue(forKey: id) }
             }
@@ -375,17 +490,40 @@ public final class MLXChatEngine: ChatEngine {
     // MARK: Images: a fresh ChatSession
 
     private static func generateWithSession(
-        container: ModelContainer, request: Request, output: inout Output
+        container: ModelContainer, request: Request, maxImageDimension: Int?, output: inout Output
     ) async throws -> PromptStats? {
         let instructions = request.instructions
-        let session = ChatSession(
-            container,
-            instructions: instructions.isEmpty ? nil : instructions,
-            history: request.history.compactMap { chatMessage($0, vision: true) },
-            generateParameters: request.parameters,
-            additionalContext: request.templateContext)
+        let image: (URL) -> UserInput.Image = { url in
+            guard let maxImageDimension else { return .url(url) }
+            return ImageDownscaler.image(at: url, maxDimension: maxImageDimension)
+        }
+        let history: [Chat.Message] = request.history.compactMap { turn in
+            switch turn.role {
+            case .system: nil
+            case .user: .user(turn.text, images: turn.images.map(image))
+            case .assistant: .assistant(turn.text)
+            }
+        }
+        let session: ChatSession
+        if maxImageDimension != nil {
+            // Images arrive already sized; the library's own resize would scale small ones up.
+            session = ChatSession(
+                container,
+                instructions: instructions.isEmpty ? nil : instructions,
+                history: history,
+                generateParameters: request.parameters,
+                processing: UserInput.Processing(),
+                additionalContext: request.templateContext)
+        } else {
+            session = ChatSession(
+                container,
+                instructions: instructions.isEmpty ? nil : instructions,
+                history: history,
+                generateParameters: request.parameters,
+                additionalContext: request.templateContext)
+        }
         var prompt: PromptStats?
-        let images = request.turn.images.map { UserInput.Image.url($0) }
+        let images = request.turn.images.map(image)
         for try await item in session.streamDetails(to: request.turn.text, images: images) {
             switch item {
             case .chunk(let text):
@@ -443,6 +581,11 @@ public final class MLXChatEngine: ChatEngine {
     /// Prompt processing of the latest reply.
     var lastPromptStats: PromptStats? {
         state.withLock { $0.lastPrompt }
+    }
+
+    /// MLX active memory just before the vision model started loading.
+    var activeBytesBeforeVisionLoad: Int? {
+        state.withLock { $0.activeBytesBeforeVisionLoad }
     }
 
     /// The container in use was loaded through MLXVLM.

@@ -27,6 +27,10 @@ public struct CatalogEntry: Codable, Hashable, Sendable, Identifiable {
     /// `true` until the value is measured on a real device.
     public var minimumMemoryIsEstimate: Bool
     public var supportsVision: Bool
+    /// Memory needed to answer about an image: the vision model (loaded instead of the text
+    /// model when a chat has an image) plus the image's processing. `nil` until measured; see
+    /// `imageMemoryBytes`.
+    public var visionMemoryBytes: Int64?
     public var license: License
     public var goodFor: String
     public var tier: Tier
@@ -64,8 +68,10 @@ public struct CatalogEntry: Codable, Hashable, Sendable, Identifiable {
         qualityRank: Int,
         isVerified: Bool = true,
         supportsThinking: Bool = false,
-        reasoningTags: ReasoningTags? = nil
+        reasoningTags: ReasoningTags? = nil,
+        visionMemoryBytes: Int64? = nil
     ) {
+        self.visionMemoryBytes = visionMemoryBytes
         self.id = id
         self.displayName = displayName
         self.revision = revision
@@ -85,6 +91,7 @@ public struct CatalogEntry: Codable, Hashable, Sendable, Identifiable {
     private enum CodingKeys: String, CodingKey {
         case id, displayName, revision, downloadSizeBytes, minimumMemoryBytes, minimumMemoryIsEstimate
         case supportsVision, license, goodFor, tier, qualityRank, isVerified, supportsThinking, reasoningTags
+        case visionMemoryBytes
     }
 
     public init(from decoder: any Decoder) throws {
@@ -104,6 +111,13 @@ public struct CatalogEntry: Codable, Hashable, Sendable, Identifiable {
         isVerified = try container.decodeIfPresent(Bool.self, forKey: .isVerified) ?? true
         supportsThinking = try container.decodeIfPresent(Bool.self, forKey: .supportsThinking) ?? false
         reasoningTags = try container.decodeIfPresent(ReasoningTags.self, forKey: .reasoningTags)
+        visionMemoryBytes = try container.decodeIfPresent(Int64.self, forKey: .visionMemoryBytes)
+    }
+
+    /// Memory needed to answer about an image. Unmeasured vision models are assumed to need a
+    /// quarter more than for text: the vision tower and the image's processing.
+    public var imageMemoryBytes: Int64 {
+        visionMemoryBytes ?? minimumMemoryBytes + minimumMemoryBytes / 4
     }
 }
 

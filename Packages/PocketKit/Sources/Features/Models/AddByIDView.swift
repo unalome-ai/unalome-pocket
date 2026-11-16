@@ -38,6 +38,7 @@ struct AddByIDView: View {
 
             if let result {
                 Section(result.entry.displayName) {
+                    CapabilityPills(library.capabilities(for: result.entry))
                     LabeledContent("Download", value: ByteFormat.file(result.entry.downloadSizeBytes))
                     LabeledContent("Memory (estimate)", value: ByteFormat.memory(result.entry.minimumMemoryBytes))
                     LabeledContent("Licence", value: result.entry.license.name)

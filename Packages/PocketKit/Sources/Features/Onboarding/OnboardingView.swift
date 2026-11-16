@@ -151,7 +151,10 @@ struct OnboardingView: View {
                 .foregroundStyle(UnalomeColor.textSecondary)
 
             if let recommended {
-                RecommendedCard(entry: recommended, isSelected: pick == .catalog(recommended.id)) {
+                RecommendedCard(
+                    entry: recommended, capabilities: library.capabilities(for: recommended),
+                    isSelected: pick == .catalog(recommended.id)
+                ) {
                     pick = .catalog(recommended.id)
                 }
             }
@@ -160,6 +163,7 @@ struct OnboardingView: View {
                 PickRow(
                     title: "Apple on-device model",
                     detail: "Built in. No download, text only.",
+                    capabilities: .appleOnDevice,
                     isSelected: pick == .builtIn
                 ) { pick = .builtIn }
             }
@@ -186,6 +190,7 @@ struct OnboardingView: View {
                             PickRow(
                                 title: entry.displayName,
                                 detail: "\(ByteFormat.file(entry.downloadSizeBytes)). \(entry.goodFor)",
+                                capabilities: library.capabilities(for: entry),
                                 isSelected: pick == .catalog(entry.id)
                             ) { pick = .catalog(entry.id) }
                         }
@@ -416,6 +421,7 @@ struct OnboardingView: View {
 /// The recommended model, given the room a decision deserves.
 private struct RecommendedCard: View {
     let entry: CatalogEntry
+    let capabilities: ModelCapabilities
     let isSelected: Bool
     let onSelect: () -> Void
 
@@ -437,6 +443,7 @@ private struct RecommendedCard: View {
                     .unalomeText(.callout)
                     .foregroundStyle(UnalomeColor.textSecondary)
                     .multilineTextAlignment(.leading)
+                CapabilityPills(capabilities)
                 HStack(spacing: 24) {
                     fact("Download", ByteFormat.file(entry.downloadSizeBytes))
                     fact("Licence", entry.license.name)
@@ -475,6 +482,7 @@ private struct RecommendedCard: View {
 private struct PickRow: View {
     let title: String
     let detail: String
+    let capabilities: ModelCapabilities
     let isSelected: Bool
     let onSelect: () -> Void
 
@@ -490,6 +498,8 @@ private struct PickRow: View {
                         .unalomeText(.footnote)
                         .foregroundStyle(UnalomeColor.textSecondary)
                         .multilineTextAlignment(.leading)
+                    CapabilityPills(capabilities)
+                        .padding(.top, 2)
                 }
                 Spacer(minLength: 0)
                 SelectionMark(isSelected: isSelected)

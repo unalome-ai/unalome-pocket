@@ -2,8 +2,10 @@ import AppleEngine
 import ChatCore
 import Features
 import ModelCatalog
+import PocketShared
 import SwiftData
 import SwiftUI
+import WidgetKit
 #if canImport(UIKit)
 import UIKit
 #endif
@@ -12,6 +14,10 @@ import UIKit
 struct UnalomePocketApp: App {
     private let container: ModelContainer
     private let services: AppServices
+    #if os(iOS)
+    private let downloadActivities: DownloadActivities
+    #endif
+    @Environment(\.scenePhase) private var scenePhase
 
     init() {
         do {
@@ -43,8 +49,15 @@ struct UnalomePocketApp: App {
                 preferences: preferences,
                 appleModelAvailability: { AppleChatEngine.availability },
                 canRunLocalModels: canRunLocalModels,
-                attachments: try AttachmentStore.applicationSupport()
+                attachments: try AttachmentStore.applicationSupport(),
+                // The widgets read a small snapshot of the latest chat from the App Group.
+                widgetSnapshots: WidgetSnapshotStore.shared().map {
+                    WidgetSnapshotPublisher(store: $0) { WidgetCenter.shared.reloadAllTimelines() }
+                }
             )
+            #if os(iOS)
+            downloadActivities = DownloadActivities(library: library)
+            #endif
         } catch {
             // Without its stores the app can neither show nor save anything.
             fatalError("Could not open the app's storage: \(error)")
@@ -62,11 +75,19 @@ struct UnalomePocketApp: App {
         WindowGroup {
             root
                 .onReceive(NotificationCenter.default.publisher(for: UIApplication.didReceiveMemoryWarningNotification)) { _ in
-                    // Free the model; the next reply loads it again.
-                    Task { await services.host.unload() }
+                    // Free the model and stop a reply in flight (the chat says why); the next
+                    // reply loads it again.
+                    Task { await services.host.unloadForMemoryWarning() }
                 }
         }
         .modelContainer(container)
+        .onChange(of: scenePhase) { _, phase in
+            switch phase {
+            case .background: downloadActivities.didEnterBackground()
+            case .active: downloadActivities.didBecomeActive()
+            default: break
+            }
+        }
         #endif
     }
 

@@ -9,6 +9,9 @@ public protocol ChatEngine: Sendable {
 
     func load(progress: @Sendable (Double) -> Void) async throws
     func unload() async
+    /// Frees the model because the system is low on memory. A reply in flight should end with
+    /// an error that says so. Defaults to `unload()`.
+    func unloadForMemoryWarning() async
 
     /// Streams the reply to `turn`. `history` holds the earlier turns, oldest first.
     /// Cancelling the consuming task (or dropping the stream) stops generation.
@@ -17,6 +20,12 @@ public protocol ChatEngine: Sendable {
         history: [ChatTurn],
         options: GenerationOptions
     ) -> AsyncThrowingStream<GenerationEvent, Error>
+}
+
+extension ChatEngine {
+    public func unloadForMemoryWarning() async {
+        await unload()
+    }
 }
 
 public struct EngineCapabilities: Sendable, Equatable {

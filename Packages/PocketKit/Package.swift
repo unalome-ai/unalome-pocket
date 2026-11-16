@@ -6,6 +6,7 @@ let package = Package(
     platforms: [.iOS(.v26), .macOS(.v26)],
     products: [
         .library(name: "UnalomeDesign", targets: ["UnalomeDesign"]),
+        .library(name: "PocketShared", targets: ["PocketShared"]),
         .library(name: "ChatCore", targets: ["ChatCore"]),
         .library(name: "ModelCatalog", targets: ["ModelCatalog"]),
         .library(name: "MLXEngine", targets: ["MLXEngine"]),
@@ -26,9 +27,13 @@ let package = Package(
             name: "UnalomeDesign",
             resources: [.process("Resources")]
         ),
+        // Routes, the widget snapshot and the download activity state: shared with the widget
+        // extension, so Foundation only.
+        .target(name: "PocketShared"),
         .target(name: "ChatCore"),
         .target(
             name: "ModelCatalog",
+            dependencies: ["PocketShared"],
             resources: [.process("Resources")]
         ),
         .target(
@@ -49,12 +54,13 @@ let package = Package(
         .target(
             name: "Features",
             dependencies: [
-                "UnalomeDesign", "ChatCore", "ModelCatalog",
+                "UnalomeDesign", "ChatCore", "ModelCatalog", "PocketShared",
                 .product(name: "Markdown", package: "swift-markdown"),
             ]
         ),
         .testTarget(name: "ChatCoreTests", dependencies: ["ChatCore"]),
-        .testTarget(name: "ModelCatalogTests", dependencies: ["ModelCatalog"]),
+        .testTarget(name: "PocketSharedTests", dependencies: ["PocketShared"]),
+        .testTarget(name: "ModelCatalogTests", dependencies: ["ModelCatalog", "PocketShared"]),
         .testTarget(
             name: "MLXEngineTests",
             dependencies: [

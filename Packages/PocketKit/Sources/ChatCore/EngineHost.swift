@@ -106,6 +106,14 @@ public final class EngineHost {
         await engine.unload()
     }
 
+    /// Frees the model because the system is low on memory: a reply in flight stops with an
+    /// error that says why, and the MLX cache is returned. The next reply loads it again.
+    public func unloadForMemoryWarning() async {
+        cancelLoad()
+        state = .unloaded
+        await engine.unloadForMemoryWarning()
+    }
+
     private func cancelLoad() {
         generation += 1
         loadTask?.cancel()

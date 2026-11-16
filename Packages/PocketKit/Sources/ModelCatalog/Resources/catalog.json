@@ -9,6 +9,7 @@
       "minimumMemoryBytes": 1319303483,
       "minimumMemoryIsEstimate": true,
       "supportsVision": true,
+      "visionMemoryBytes": 2657286459,
       "license": {
         "name": "Apache 2.0",
         "url": "https://huggingface.co/Qwen/Qwen3.5-0.8B/blob/main/LICENSE"
@@ -60,6 +61,7 @@
       "minimumMemoryBytes": 2635766541,
       "minimumMemoryIsEstimate": true,
       "supportsVision": true,
+      "visionMemoryBytes": 4037712653,
       "license": {
         "name": "Apache 2.0",
         "url": "https://huggingface.co/Qwen/Qwen3.5-2B/blob/main/LICENSE"
@@ -77,6 +79,7 @@
       "minimumMemoryBytes": 4836574709,
       "minimumMemoryIsEstimate": true,
       "supportsVision": true,
+      "visionMemoryBytes": 5184701941,
       "license": {
         "name": "Apache 2.0",
         "url": "https://ai.google.dev/gemma/apache_2"
@@ -98,6 +101,7 @@
       "minimumMemoryBytes": 4210225804,
       "minimumMemoryIsEstimate": true,
       "supportsVision": true,
+      "visionMemoryBytes": 5870121612,
       "license": {
         "name": "Apache 2.0",
         "url": "https://huggingface.co/Qwen/Qwen3.5-4B/blob/main/LICENSE"

@@ -13,3 +13,19 @@ enum ProcessMemory {
         return result == KERN_SUCCESS ? Int64(info.phys_footprint) : nil
     }
 }
+
+#if os(iOS)
+import os
+#endif
+
+extension ProcessMemory {
+    /// Memory this process may still allocate before iOS stops it. `nil` on macOS.
+    static func availableBytes() -> Int64? {
+        #if os(iOS)
+        let bytes = os_proc_available_memory()
+        return bytes > 0 ? Int64(bytes) : nil
+        #else
+        return nil
+        #endif
+    }
+}

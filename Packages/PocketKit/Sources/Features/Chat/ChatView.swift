@@ -12,11 +12,37 @@ public struct ChatView: View {
     @Environment(\.scenePhase) private var scenePhase
     private let services: AppServices
 
-    public init(conversation: Conversation, store: ConversationStore, services: AppServices) {
+    private let startAction: ChatStartAction?
+    private let onStartActionHandled: () -> Void
+
+    /// - Parameter startAction: What to do once on appearing, for chats opened by Siri,
+    ///   Shortcuts or a widget.
+    public init(
+        conversation: Conversation, store: ConversationStore, services: AppServices,
+        startAction: ChatStartAction? = nil, onStartActionHandled: @escaping () -> Void = {}
+    ) {
         let model = ChatViewModel(conversation: conversation, store: store, host: services.host)
         model.onReplyFinished = { choice, metrics in services.record(metrics, for: choice) }
+        model.onReplySaved = { services.widgetSnapshots?.publish(from: store) }
         _model = State(initialValue: model)
         self.services = services
+        self.startAction = startAction
+        self.onStartActionHandled = onStartActionHandled
+    }
+
+    private func runStartAction() {
+        guard let startAction else { return }
+        onStartActionHandled()
+        switch startAction {
+        case .listen:
+            voice.onTranscript = { [model] text in model.draft = text.trimmingCharacters(in: .whitespaces) }
+            voice.toggle()
+        case .ask(let question):
+            model.draft = question
+            if services.canAnswerRoutedQuestions {
+                model.send()
+            }
+        }
     }
 
     public var body: some View {
@@ -63,6 +89,7 @@ public struct ChatView: View {
                     }
             }
         }
+        .task { runStartAction() }
         // Leaving the conversation stops the reply and keeps what was written so far.
         .onDisappear {
             model.stop()
@@ -77,6 +104,14 @@ public struct ChatView: View {
             }
         }
     }
+}
+
+/// Something a chat does once when it opens from outside the app.
+public enum ChatStartAction: Equatable, Sendable {
+    /// Start dictation.
+    case listen
+    /// Put the question in the composer and send it if a model can answer.
+    case ask(String)
 }
 
 // MARK: - Messages

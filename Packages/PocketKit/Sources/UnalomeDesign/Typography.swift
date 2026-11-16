@@ -46,6 +46,8 @@ public enum UnalomeTextStyle: Sendable, CaseIterable {
     case eyebrow
     /// SF Mono for code.
     case code
+    /// Small labels such as capability pills: 11 pt medium.
+    case caption
 
     struct Spec {
         var size: CGFloat
@@ -66,6 +68,7 @@ public enum UnalomeTextStyle: Sendable, CaseIterable {
         case .footnote: Spec(size: 13, weight: .medium, relativeTo: .footnote)
         case .eyebrow: Spec(size: 11, weight: .semibold, relativeTo: .caption2, trackingEm: 0.1, isUppercase: true)
         case .code: Spec(size: 15, weight: .regular, relativeTo: .callout, isMonospaced: true)
+        case .caption: Spec(size: 11, weight: .medium, relativeTo: .caption2)
         }
     }
 }

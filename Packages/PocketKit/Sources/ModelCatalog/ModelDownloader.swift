@@ -5,10 +5,13 @@ import Synchronization
 public struct DownloadProgress: Sendable, Equatable {
     public var completedBytes: Int64
     public var totalBytes: Int64
+    /// Checking a downloaded file against Hugging Face's checksum.
+    public var isVerifying: Bool
 
-    public init(completedBytes: Int64, totalBytes: Int64) {
+    public init(completedBytes: Int64, totalBytes: Int64, isVerifying: Bool = false) {
         self.completedBytes = completedBytes
         self.totalBytes = totalBytes
+        self.isVerifying = isVerifying
     }
 
     public var fraction: Double {
@@ -112,6 +115,7 @@ public final class ModelDownloader: Sendable {
             }
             if let expected = file.sha256 {
                 try Task.checkCancellation()
+                reporter.verifying(finishedBytes + size)
                 guard try Self.sha256(of: target) == expected else {
                     try? FileManager.default.removeItem(at: target)
                     throw DownloadError.checksumMismatch(file: file.path)
@@ -173,6 +177,12 @@ private final class ThrottledProgress: Sendable {
         if due {
             report(DownloadProgress(completedBytes: completed, totalBytes: total))
         }
+    }
+
+    /// Reported at once: hashing a large file takes a few seconds with no byte progress.
+    func verifying(_ completed: Int64) {
+        lastReport.withLock { $0 = ContinuousClock.now }
+        report(DownloadProgress(completedBytes: completed, totalBytes: total, isVerifying: true))
     }
 
     func finish(_ completed: Int64) {

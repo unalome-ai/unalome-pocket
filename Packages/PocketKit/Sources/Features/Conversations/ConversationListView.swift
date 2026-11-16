@@ -7,6 +7,8 @@ import UnalomeDesign
 struct ConversationListView: View {
     @Binding var selection: Conversation?
     let store: ConversationStore
+    /// Called after a chat is deleted.
+    var onDelete: () -> Void = {}
 
     @State private var searchText = ""
     @State private var renaming: Conversation?
@@ -56,6 +58,7 @@ struct ConversationListView: View {
             selection = nil
         }
         perform { try store.delete(conversation) }
+        onDelete()
     }
 
     private func perform(_ action: () throws -> Void) {

@@ -34,6 +34,17 @@ public enum ModelLabel: Sendable, Equatable {
     }
 }
 
+/// How well a model can answer about images on a device.
+public enum ImageUse: Sendable, Equatable {
+    /// Text only, or not checked (models added by ID).
+    case unsupported
+    case fits
+    /// Fits, but close to the memory limit.
+    case tight
+    /// The vision model does not fit; the model is text-only on this device.
+    case tooLarge
+}
+
 public struct Recommendation: Sendable, Equatable {
     public var labels: [String: ModelLabel]
     /// `nil` when no catalog model fits this device.
@@ -105,6 +116,39 @@ public enum ModelRecommender {
             labels[pick.id] = .recommended
         }
         return Recommendation(labels: labels, recommendedID: pick?.id, appleModel: appleModel)
+    }
+
+    /// Whether a model can answer about images on this device. Same rule as for text, against
+    /// the vision model's estimate: images load a larger model than text does.
+    public static func imageUse(_ entry: CatalogEntry, device: DeviceProfile) -> ImageUse {
+        guard entry.supportsVision, entry.isVerified else { return .unsupported }
+        let needed = entry.imageMemoryBytes
+        let budget = device.memoryBudgetBytes
+        if needed > budget { return .tooLarge }
+        return Double(needed) > Double(budget) * memoryMargin ? .tight : .fits
+    }
+
+    /// Vision models that can read images on this device, best first, for suggesting instead of
+    /// one that cannot.
+    public static func imageCapableAlternatives(
+        to entry: CatalogEntry, in catalog: [CatalogEntry], device: DeviceProfile, limit: Int = 2
+    ) -> [CatalogEntry] {
+        catalog
+            .filter { $0.id != entry.id && imageUse($0, device: device) == .fits }
+            .sorted { $0.qualityRank > $1.qualityRank }
+            .prefix(limit)
+            .map { $0 }
+    }
+
+    /// The error a chat shows when an image is sent to a model this device cannot run it with.
+    public static func imageTooLargeMessage(alternatives: [CatalogEntry]) -> String {
+        let base = "This model needs more memory than this device has free to read images."
+        let names = alternatives.map(\.displayName)
+        switch names.count {
+        case 0: return base + " Ask without the photo, or use a Mac."
+        case 1: return base + " Try \(names[0])."
+        default: return base + " Try \(names.dropLast().joined(separator: ", ")) or \(names.last!)."
+        }
     }
 
     /// Memory a model needs: measured on this device when known, otherwise the estimate.

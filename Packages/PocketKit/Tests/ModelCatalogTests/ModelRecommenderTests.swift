@@ -229,3 +229,114 @@ private final class AvailableMemory: @unchecked Sendable {
         set { lock.withLock { bytes = newValue } }
     }
 }
+
+/// Images load a larger model than text, so whether a model can read them is judged separately.
+struct ImageUseTests {
+    private let catalog = try! CatalogLoader.bundled().models
+    private func entry(_ id: String) -> CatalogEntry { catalog.first { $0.id == id }! }
+    /// iPhone 15 Pro-like: 8 GB, with the budget the OS reports at launch.
+    private func phone(budgetGiB: Double) -> DeviceProfile {
+        DeviceProfile(kind: .phone, physicalMemoryBytes: 8 * gib, availableMemoryBytes: Int64(budgetGiB * Double(gib)))
+    }
+
+    @Test func measuredVisionModelsCarryTheirImageMemory() {
+        for id in [ID.qwen08, ID.qwen2, ID.qwen4, ID.gemmaE2] {
+            let model = entry(id)
+            let vision = try! #require(model.visionMemoryBytes, "\(id)")
+            #expect(vision > model.minimumMemoryBytes, "\(id): images need more than text")
+            #expect(model.imageMemoryBytes == vision)
+        }
+        // Unmeasured: a quarter more than for text.
+        let e4 = entry(ID.gemmaE4)
+        #expect(e4.visionMemoryBytes == nil)
+        #expect(e4.imageMemoryBytes == e4.minimumMemoryBytes + e4.minimumMemoryBytes / 4)
+    }
+
+    @Test func imageUseFollowsTheVisionEstimate() {
+        let device = phone(budgetGiB: 5.4)
+        #expect(ModelRecommender.imageUse(entry(ID.gemma1), device: device) == .unsupported)
+        #expect(ModelRecommender.imageUse(entry(ID.qwen08), device: device) == .fits)
+        #expect(ModelRecommender.imageUse(entry(ID.qwen2), device: device) == .fits)
+        // Text fits (4.2 GB), images do not (5.9 GB needed): text-only on this device.
+        let labels = ModelRecommender.recommend(catalog: catalog, device: device, appleModel: .deviceNotEligible)
+        #expect(labels.label(for: ID.qwen4).isUsable)
+        #expect(ModelRecommender.imageUse(entry(ID.qwen4), device: device) == .tooLarge)
+        #expect(ModelRecommender.imageUse(entry(ID.gemmaE2), device: device) == .tight)
+        // More room: the 4B reads images, close to the limit.
+        #expect(ModelRecommender.imageUse(entry(ID.qwen4), device: phone(budgetGiB: 6)) == .tight)
+    }
+
+    @Test func modelsAddedByIDAreNotPromisedImages() {
+        var added = entry(ID.qwen2)
+        added.isVerified = false
+        #expect(ModelRecommender.imageUse(added, device: phone(budgetGiB: 7)) == .unsupported)
+    }
+
+    @Test func suggestsModelsThatFit() {
+        let alternatives = ModelRecommender.imageCapableAlternatives(
+            to: entry(ID.qwen4), in: catalog, device: phone(budgetGiB: 5.4))
+        #expect(alternatives.map(\.id) == [ID.qwen2, ID.qwen08])
+        #expect(ModelRecommender.imageTooLargeMessage(alternatives: alternatives)
+            == "This model needs more memory than this device has free to read images. Try Qwen 3.5 2B or Qwen 3.5 0.8B.")
+        #expect(ModelRecommender.imageTooLargeMessage(alternatives: Array(alternatives.prefix(1)))
+            == "This model needs more memory than this device has free to read images. Try Qwen 3.5 2B.")
+        #expect(ModelRecommender.imageTooLargeMessage(alternatives: []).hasSuffix("Ask without the photo, or use a Mac."))
+    }
+
+    @Test func imageSizeIsSmallerOnDevicesWithLessMemory() {
+        // An 8 GB iPhone reports a little under 8 GiB.
+        let iPhone = DeviceProfile(kind: .phone, physicalMemoryBytes: 7_900_000_000)
+        let mac = DeviceProfile(kind: .mac, physicalMemoryBytes: 16 * gib)
+        #expect(ImageSizePolicy.maxDimension(for: iPhone) == 1024)
+        #expect(ImageSizePolicy.maxDimension(for: mac) == 1536)
+    }
+}
+
+struct ModelCapabilityTests {
+    private let catalog = try! CatalogLoader.bundled().models
+    private func entry(_ id: String) -> CatalogEntry { catalog.first { $0.id == id }! }
+
+    @Test func visionModel() {
+        // Qwen 3.5 2B: images and thinking.
+        let capabilities = ModelCapabilities(entry(ID.qwen2))
+        #expect(capabilities.capabilities == [.text, .image, .voice, .thinking])
+        #expect(capabilities.accessibilityText == "Supports text, image, voice, thinking")
+    }
+
+    @Test func textOnlyModel() {
+        let capabilities = ModelCapabilities(entry(ID.lfm))
+        #expect(capabilities.capabilities == [.text, .voice])
+        #expect(capabilities.accessibilityText == "Supports text, voice")
+    }
+
+    @Test func thinkingWithoutVision() {
+        var thinker = entry(ID.lfm)
+        thinker.supportsThinking = true
+        #expect(ModelCapabilities(thinker).capabilities == [.text, .voice, .thinking])
+    }
+
+    @Test func appleBuiltIn() {
+        #expect(ModelCapabilities.appleOnDevice.capabilities == [.text, .voice])
+    }
+
+    @Test func unverifiedAddByIDRepoShowsTextAndVoiceOnly() {
+        var added = entry(ID.qwen2)
+        added.isVerified = false
+        #expect(ModelCapabilities(added).capabilities == [.text, .voice])
+    }
+
+    @Test func imageDependsOnTheDevice() {
+        let phone = DeviceProfile(kind: .phone, physicalMemoryBytes: 8 * gib, availableMemoryBytes: Int64(5.4 * Double(gib)))
+        // The 4B reads images only where its vision model fits.
+        #expect(ModelCapabilities(entry(ID.qwen4), device: phone).capabilities == [.text, .voice, .thinking])
+        let gemma = ModelCapabilities(entry(ID.gemmaE2), device: phone)
+        #expect(gemma.capabilities.contains(.image) && gemma.imageIsTight)
+        #expect(gemma.accessibilityText.hasSuffix("close to this device's memory limit"))
+        let mac = DeviceProfile(kind: .mac, physicalMemoryBytes: 32 * gib)
+        #expect(ModelCapabilities(entry(ID.qwen4), device: mac).capabilities == [.text, .image, .voice, .thinking])
+    }
+
+    @Test func accentedCapabilities() {
+        #expect(ModelCapability.allCases.filter(\.isAccented) == [.image, .thinking])
+    }
+}

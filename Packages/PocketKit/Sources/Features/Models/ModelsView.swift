@@ -26,6 +26,7 @@ struct ModelsView: View {
                     ForEach(library.installed) { model in
                         InstalledRow(
                             model: model,
+                            capabilities: library.capabilities(for: model),
                             isInUse: services.host.choice == .localModel(repoID: model.repoID),
                             canRun: services.canRunLocalModels
                         ) {
@@ -111,6 +112,7 @@ struct ModelsView: View {
         CatalogRow(
             entry: entry,
             label: label,
+            capabilities: library.capabilities(for: entry),
             download: library.downloads[entry.id],
             onDownload: { licenseRequest = entry },
             onResume: { library.download(entry) },
@@ -190,6 +192,7 @@ private struct StorageRow: View {
 
 private struct InstalledRow: View {
     let model: InstalledModel
+    let capabilities: ModelCapabilities
     let isInUse: Bool
     let canRun: Bool
     let onUse: () -> Void
@@ -209,6 +212,8 @@ private struct InstalledRow: View {
                     Text(details)
                         .unalomeText(.footnote)
                         .foregroundStyle(UnalomeColor.textSecondary)
+                    CapabilityPills(capabilities)
+                        .padding(.top, 2)
                 }
                 Spacer()
                 if isInUse {
@@ -248,6 +253,8 @@ private struct AppleModelRow: View {
                     Text(availability.isAvailable ? "No download needed. Text only." : availability.explanation)
                         .unalomeText(.footnote)
                         .foregroundStyle(UnalomeColor.textSecondary)
+                    CapabilityPills(.appleOnDevice)
+                        .padding(.top, 2)
                 }
                 Spacer()
                 if isInUse {
@@ -264,6 +271,7 @@ private struct AppleModelRow: View {
 private struct CatalogRow: View {
     let entry: CatalogEntry
     let label: ModelLabel
+    let capabilities: ModelCapabilities
     let download: ModelLibrary.DownloadState?
     let onDownload: () -> Void
     let onResume: () -> Void
@@ -285,6 +293,7 @@ private struct CatalogRow: View {
             Text(entry.goodFor)
                 .unalomeText(.callout)
                 .foregroundStyle(UnalomeColor.textSecondary)
+            CapabilityPills(capabilities)
             Text(details)
                 .unalomeText(.footnote)
                 .foregroundStyle(UnalomeColor.textTertiary)

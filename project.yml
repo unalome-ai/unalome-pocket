@@ -27,7 +27,13 @@ targets:
     supportedDestinations: [iOS, macOS]
     sources:
       - path: App
+      # App Intents and the Live Activity attributes, compiled into the app and the widgets.
+      - path: Shared
     dependencies:
+      - target: UnalomePocketWidgets
+        destinationFilters: [iOS]
+      - package: PocketKit
+        product: PocketShared
       - package: PocketKit
         product: Features
       - package: PocketKit
@@ -71,6 +77,15 @@ targets:
         NSMicrophoneUsageDescription: Dictate messages. Speech is turned into text on this device and is never sent anywhere.
         NSSpeechRecognitionUsageDescription: Dictate messages with on-device speech recognition. Nothing is sent to a server.
         UIUserInterfaceStyle: Dark
+        # unalomepocket://new, /voice, /ask?q=…, /conversation/<id>: widgets and Shortcuts.
+        CFBundleURLTypes:
+          - CFBundleURLName: ai.unalome.pocket
+            CFBundleURLSchemes: [unalomepocket]
+        # Model downloads on the Lock Screen and in the Dynamic Island.
+        NSSupportsLiveActivities: true
+        # One continued-processing task per model download, so it keeps going in the background.
+        BGTaskSchedulerPermittedIdentifiers:
+          - ai.unalome.pocket.download.*
         UIApplicationSceneManifest:
           # One window: two windows on one conversation would stream two replies into it.
           UIApplicationSupportsMultipleScenes: false
@@ -83,3 +98,35 @@ targets:
           - UIInterfaceOrientationPortraitUpsideDown
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
+
+  UnalomePocketWidgets:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: Widgets
+      - path: Shared
+    dependencies:
+      - package: PocketKit
+        product: PocketShared
+      - package: PocketKit
+        product: UnalomeDesign
+      - sdk: WidgetKit.framework
+      - sdk: SwiftUI.framework
+    configFiles:
+      Debug: Config/Base.xcconfig
+      Release: Config/Base.xcconfig
+    settings:
+      base:
+        CODE_SIGN_ENTITLEMENTS: Widgets/UnalomePocketWidgets.entitlements
+        PRODUCT_BUNDLE_IDENTIFIER: ai.unalome.pocket.widgets
+        PRODUCT_NAME: UnalomePocketWidgets
+        TARGETED_DEVICE_FAMILY: "1,2"
+        SKIP_INSTALL: YES
+    info:
+      path: Widgets/Info.plist
+      properties:
+        CFBundleDisplayName: Unalome Pocket
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension

@@ -26,6 +26,8 @@ public final class ChatViewModel {
 
     /// Called with what each reply that ran to the end measured.
     public var onReplyFinished: ((EngineChoice, ReplyMetrics) -> Void)?
+    /// Called whenever a reply is saved (finished or stopped), e.g. to refresh the widgets.
+    public var onReplySaved: (() -> Void)?
 
     private let store: ConversationStore
     private let temperature: Double
@@ -335,6 +337,7 @@ public final class ChatViewModel {
             } else {
                 conversation.updatedAt = .now
                 try store.save()
+                onReplySaved?()
                 if completed, tokensPerSecond != nil || memoryUsage != nil {
                     onReplyFinished?(host.choice, ReplyMetrics(tokensPerSecond: tokensPerSecond, memory: memoryUsage))
                 }

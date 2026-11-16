@@ -1,4 +1,5 @@
 import ChatCore
+import PocketShared
 import SwiftData
 import SwiftUI
 import UnalomeDesign
@@ -16,6 +17,9 @@ public struct RootView: View {
     @State private var isShowingModels = false
     @State private var isShowingPersonas = false
     @State private var isShowingAbout = false
+    /// A start action waiting for its chat to appear.
+    @State private var pendingStart: (id: UUID, action: ChatStartAction)?
+    @State private var inbox = RouteInbox.shared
     private let services: AppServices
 
     public init(services: AppServices) {
@@ -36,13 +40,21 @@ public struct RootView: View {
         .preferredColorScheme(.dark)
         .task { await services.library.refreshCatalog() }
         .task { prepareStores() }
+        // Routes wait until onboarding is done, then open their chat.
+        .onOpenURL { url in
+            if let route = AppRoute(url: url) { inbox.post(route) }
+        }
+        .onChange(of: inbox.pending, initial: true) { _, _ in applyPendingRoute() }
+        .onChange(of: services.preferences.hasCompletedOnboarding) { _, _ in applyPendingRoute() }
         .modifier(KeepAwakeWhile(isActive: services.library.isDownloading))
     }
 
     private var conversations: some View {
         let store = ConversationStore(context: context, attachments: services.attachments)
         return NavigationSplitView {
-            ConversationListView(selection: $selection, store: store)
+            ConversationListView(selection: $selection, store: store) {
+                services.widgetSnapshots?.publish(from: store)
+            }
                 .toolbar {
                     ToolbarItem(placement: .navigation) {
                         Button("Models", systemImage: "cpu") { isShowingModels = true }
@@ -56,8 +68,12 @@ public struct RootView: View {
                 }
         } detail: {
             if let selection {
-                ChatView(conversation: selection, store: store, services: services)
-                    .id(selection.id)
+                ChatView(
+                    conversation: selection, store: store, services: services,
+                    startAction: pendingStart?.id == selection.id ? pendingStart?.action : nil,
+                    onStartActionHandled: { pendingStart = nil }
+                )
+                .id(selection.id)
             } else {
                 NoChatSelectedView {
                     do {
@@ -110,11 +126,40 @@ public struct RootView: View {
 }
 
 extension RootView {
+    /// Opens the chat a route asks for. Waits while onboarding is showing.
+    private func applyPendingRoute() {
+        guard services.preferences.hasCompletedOnboarding, let route = inbox.take() else { return }
+        let store = ConversationStore(context: context, attachments: services.attachments)
+        do {
+            switch route {
+            case .newChat:
+                selection = try store.createConversation()
+            case .voice:
+                let chat = try store.createConversation()
+                pendingStart = (chat.id, .listen)
+                selection = chat
+            case .ask(let question):
+                let chat = try store.createConversation()
+                pendingStart = (chat.id, .ask(question))
+                selection = chat
+            case .conversation(let id):
+                // A chat deleted since the widget last refreshed: stay where we are.
+                if let chat = try store.conversations().first(where: { $0.id == id }) {
+                    selection = chat
+                }
+            }
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
     /// Adds the starter personas on first launch and deletes images no message uses.
     private func prepareStores() {
         do {
             try PersonaStore(context: context).seedOnce(defaults: services.preferences.defaults)
-            try ConversationStore(context: context, attachments: services.attachments).removeUnreferencedAttachments()
+            let store = ConversationStore(context: context, attachments: services.attachments)
+            try store.removeUnreferencedAttachments()
+            services.widgetSnapshots?.publish(from: store)
         } catch {
             errorMessage = error.localizedDescription
         }

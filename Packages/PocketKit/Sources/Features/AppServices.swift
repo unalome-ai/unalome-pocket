@@ -40,6 +40,8 @@ public struct AppServices {
     public let canRunLocalModels: Bool
     /// Where attached images are stored; `nil` turns image input off.
     public let attachments: AttachmentStore?
+    /// Keeps the widgets' snapshot current; `nil` where there are no widgets.
+    public let widgetSnapshots: WidgetSnapshotPublisher?
 
     public init(
         host: EngineHost,
@@ -47,7 +49,8 @@ public struct AppServices {
         preferences: AppPreferences,
         appleModelAvailability: @escaping @MainActor () -> AppleModelAvailability,
         canRunLocalModels: Bool,
-        attachments: AttachmentStore? = nil
+        attachments: AttachmentStore? = nil,
+        widgetSnapshots: WidgetSnapshotPublisher? = nil
     ) {
         self.host = host
         self.library = library
@@ -55,6 +58,7 @@ public struct AppServices {
         self.appleModelAvailability = appleModelAvailability
         self.canRunLocalModels = canRunLocalModels
         self.attachments = attachments
+        self.widgetSnapshots = widgetSnapshots
     }
 
     /// The engine to start with: the stored choice if it can still be used, otherwise an installed
@@ -79,6 +83,13 @@ public struct AppServices {
             return .localModel(repoID: repoID)
         }
         return appleModel.isAvailable ? .appleOnDevice : .scripted
+    }
+
+    /// A question from Siri or a widget can be answered right away: a real model is selected.
+    /// On a device that has only the scripted demo (no model downloaded, no Apple model), the
+    /// question waits in the composer instead.
+    public var canAnswerRoutedQuestions: Bool {
+        host.choice != .scripted || !canRunLocalModels
     }
 
     /// Switches the chat engine and remembers the choice.
