@@ -492,6 +492,10 @@ private struct Composer: View {
     @ScaledMetric(relativeTo: .body) private var scaledButtonSize: CGFloat = 36
     /// Grows with the text size, but not so far that the message field has no room left.
     private var buttonSize: CGFloat { min(scaledButtonSize, 48) }
+    /// Space above and below the text: one line of body text plus this, twice, is 44 pt.
+    @ScaledMetric(relativeTo: .body) private var textLineHeight: CGFloat = 20.6
+    private var fieldPadding: CGFloat { max((44 - textLineHeight) / 2, 6) }
+
     @State private var isDropTargeted = false
     @State private var pickedPhotos: [PhotosPickerItem] = []
     @State private var isShowingCamera = false
@@ -530,31 +534,48 @@ private struct Composer: View {
                 .scrollIndicators(.hidden)
             }
 
+            // Buttons stay at the bottom. The field's padding makes one line exactly as tall as a
+            // button's 44 pt tap area, so a single line sits level with them and a longer
+            // message grows upwards. (An empty field reports unreliable text baselines, so
+            // nothing here is aligned by baseline.)
             HStack(alignment: .bottom, spacing: 8) {
                 if model.supportsImages {
                     attachMenu
                 }
 
-                TextField("Message", text: $model.draft, selection: $selection, axis: .vertical)
-                    .unalomeText(.body)
-                    .lineLimit(1...6)
-                    .textFieldStyle(.plain)
-                    .padding(.vertical, 8)
-                    .onSubmit(send)
-                    // Hardware keyboards: Return sends, Shift-Return starts a new line, Esc stops.
-                    .onKeyPress(.return, phases: .down) { press in
-                        if press.modifiers.contains(.shift) || press.modifiers.contains(.option) {
-                            insertNewline()
-                        } else {
-                            send()
+                // Our own placeholder, laid out exactly like the typed text: same font, same
+                // padding, same top-leading origin.
+                ZStack(alignment: .topLeading) {
+                    if model.draft.isEmpty {
+                        Text("Message")
+                            .unalomeText(.body)
+                            .foregroundStyle(UnalomeColor.textTertiary)
+                            .lineLimit(1)
+                            .padding(.vertical, fieldPadding)
+                            .allowsHitTesting(false)
+                            .accessibilityHidden(true)
+                    }
+                    TextField("Message", text: $model.draft, selection: $selection, prompt: Text(" "), axis: .vertical)
+                        .unalomeText(.body)
+                        .lineLimit(1...6)
+                        .textFieldStyle(.plain)
+                        .padding(.vertical, fieldPadding)
+                        .onSubmit(send)
+                        // Hardware keyboards: Return sends, Shift-Return starts a new line, Esc stops.
+                        .onKeyPress(.return, phases: .down) { press in
+                            if press.modifiers.contains(.shift) || press.modifiers.contains(.option) {
+                                insertNewline()
+                            } else {
+                                send()
+                            }
+                            return .handled
                         }
-                        return .handled
-                    }
-                    .onKeyPress(.escape) {
-                        guard model.isGenerating else { return .ignored }
-                        model.stop()
-                        return .handled
-                    }
+                        .onKeyPress(.escape) {
+                            guard model.isGenerating else { return .ignored }
+                            model.stop()
+                            return .handled
+                        }
+                }
 
                 if !model.isGenerating {
                     micButton
