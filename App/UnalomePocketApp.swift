@@ -50,10 +50,7 @@ struct UnalomePocketApp: App {
                 appleModelAvailability: { AppleChatEngine.availability },
                 canRunLocalModels: canRunLocalModels,
                 attachments: try AttachmentStore.applicationSupport(),
-                // The widgets read a small snapshot of the latest chat from the App Group.
-                widgetSnapshots: WidgetSnapshotStore.shared().map {
-                    WidgetSnapshotPublisher(store: $0) { WidgetCenter.shared.reloadAllTimelines() }
-                }
+                widgetSnapshots: Self.makeWidgetSnapshots()
             )
             #if os(iOS)
             downloadActivities = DownloadActivities(library: library)
@@ -64,13 +61,35 @@ struct UnalomePocketApp: App {
         }
     }
 
+    /// The widgets read a small snapshot of the latest chat from the App Group. There are no
+    /// widgets on Mac, so nothing is written there.
+    private static func makeWidgetSnapshots() -> WidgetSnapshotPublisher? {
+        #if os(iOS)
+        WidgetSnapshotStore.shared().map {
+            WidgetSnapshotPublisher(store: $0) { WidgetCenter.shared.reloadAllTimelines() }
+        }
+        #else
+        nil
+        #endif
+    }
+
     var body: some Scene {
         #if os(macOS)
         // One window: two windows on one conversation would stream two replies into it.
         Window("Unalome Pocket", id: "main") {
             root
+                .frame(minWidth: 720, minHeight: 520)
+                .task { MemoryPressure.shared.start { await services.host.unloadForMemoryWarning() } }
         }
+        .defaultSize(width: 1100, height: 760)
+        .windowResizability(.contentMinSize)
         .modelContainer(container)
+        .commands { PocketCommands() }
+
+        Settings {
+            SettingsView(services: services)
+                .modelContainer(container)
+        }
         #else
         WindowGroup {
             root
@@ -81,6 +100,7 @@ struct UnalomePocketApp: App {
                 }
         }
         .modelContainer(container)
+        .commands { PocketCommands() }
         .onChange(of: scenePhase) { _, phase in
             switch phase {
             case .background: downloadActivities.didEnterBackground()
@@ -95,3 +115,22 @@ struct UnalomePocketApp: App {
         RootView(services: services)
     }
 }
+
+#if os(macOS)
+/// The Mac has no memory warning; a critical memory-pressure event frees the model the same way.
+@MainActor
+private final class MemoryPressure {
+    static let shared = MemoryPressure()
+    private var source: DispatchSourceMemoryPressure?
+
+    func start(_ handler: @escaping @MainActor () async -> Void) {
+        guard source == nil else { return }
+        let source = DispatchSource.makeMemoryPressureSource(eventMask: .critical, queue: .main)
+        source.setEventHandler {
+            MainActor.assumeIsolated { Task { await handler() } }
+        }
+        source.resume()
+        self.source = source
+    }
+}
+#endif

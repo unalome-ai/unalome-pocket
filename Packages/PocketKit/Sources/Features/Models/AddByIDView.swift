@@ -77,7 +77,7 @@ struct AddByIDView: View {
             do {
                 result = try await library.inspect(repoID: id)
             } catch {
-                errorMessage = error.localizedDescription
+                errorMessage = PlainErrorMessage.describe(error)
             }
             isChecking = false
         }

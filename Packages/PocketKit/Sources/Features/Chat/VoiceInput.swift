@@ -1,5 +1,6 @@
 import AVFoundation
 import Foundation
+import ModelCatalog
 import Observation
 import Speech
 
@@ -21,6 +22,8 @@ public final class VoiceInput {
     public private(set) var state: State = .idle
     /// Why voice input cannot be used right now, in plain words. Cleared on the next start.
     public private(set) var unavailableReason: String?
+    /// The reason is a denied permission, so the chat offers a link to Settings.
+    public private(set) var isPermissionDenied = false
 
     /// Receives the dictated text (final plus the still-changing part) as it arrives.
     @ObservationIgnored public var onTranscript: (String) -> Void = { _ in }
@@ -34,6 +37,8 @@ public final class VoiceInput {
         let analyzer: SpeechAnalyzer
         let input: AsyncStream<AnalyzerInput>.Continuation
         let results: Task<Void, Never>
+        /// Watches for a call, Siri or another app taking the microphone.
+        let interruptionObserver: NSObjectProtocol?
     }
 
     public init() {}
@@ -57,12 +62,14 @@ public final class VoiceInput {
         guard state == .idle else { return }
         state = .preparing
         unavailableReason = nil
+        isPermissionDenied = false
         finalized = ""
         do {
             session = try await makeSession(locale: locale)
             state = .recording
         } catch {
             unavailableReason = (error as? VoiceInputError)?.message ?? error.localizedDescription
+            isPermissionDenied = error as? VoiceInputError == .microphoneDenied
             state = .idle
             Self.deactivateAudioSession()
         }
@@ -72,6 +79,7 @@ public final class VoiceInput {
     public func stop() async {
         guard let session else { return }
         self.session = nil
+        Self.removeObserver(session)
         session.audio.stop()
         session.audio.inputNode.removeTap(onBus: 0)
         session.input.finish()
@@ -85,6 +93,7 @@ public final class VoiceInput {
     public func cancel() {
         guard let session else { return }
         self.session = nil
+        Self.removeObserver(session)
         session.audio.stop()
         session.audio.inputNode.removeTap(onBus: 0)
         session.input.finish()
@@ -151,7 +160,34 @@ public final class VoiceInput {
             await analyzer.cancelAndFinishNow()
             throw error
         }
-        return Session(audio: audio, analyzer: analyzer, input: continuation, results: results)
+        return Session(
+            audio: audio, analyzer: analyzer, input: continuation, results: results,
+            interruptionObserver: observeInterruptions(of: audio))
+    }
+
+    /// A phone call, Siri or a route change stops the recording; the words so far are kept and the
+    /// audio session is released.
+    private func observeInterruptions(of audio: AVAudioEngine) -> NSObjectProtocol? {
+        #if os(iOS)
+        let name = AVAudioSession.interruptionNotification
+        let object: Any? = AVAudioSession.sharedInstance()
+        #else
+        let name = Notification.Name.AVAudioEngineConfigurationChange
+        let object: Any? = audio
+        #endif
+        return NotificationCenter.default.addObserver(forName: name, object: object, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.session != nil else { return }
+                self.unavailableReason = "Voice input stopped because another app or a call took the microphone."
+                Task { await self.stop() }
+            }
+        }
+    }
+
+    private static func removeObserver(_ session: Session) {
+        if let observer = session.interruptionObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
     }
 
     private func receive(_ text: String, isFinal: Bool) {
@@ -189,15 +225,15 @@ enum VoiceInputError: Error, Equatable {
     var message: String {
         switch self {
         case .notSupported:
-            "Voice input needs on-device speech recognition, which this device does not have."
+            "Voice input needs on-device speech recognition, which \(DeviceProfile.currentKind.thisDevice) does not have."
         case .microphoneDenied:
-            "Voice input needs the microphone. You can allow it in Settings › Privacy & Security › Microphone."
+            "Voice input needs the microphone. You can allow it in Settings."
         case .noMicrophone:
             "No microphone is available."
         case .languageUnsupported(let language):
             "On-device speech recognition does not support \(language) yet."
         case .languageNotInstalled(let language):
-            "On-device speech recognition for \(language) is not installed on this device, so voice input is off. "
+            "On-device speech recognition for \(language) is not installed on \(DeviceProfile.currentKind.thisDevice), so voice input is off. "
                 + "Nothing is sent to a server instead."
         }
     }

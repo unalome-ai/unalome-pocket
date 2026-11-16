@@ -20,6 +20,9 @@ public struct RootView: View {
     /// A start action waiting for its chat to appear.
     @State private var pendingStart: (id: UUID, action: ChatStartAction)?
     @State private var inbox = RouteInbox.shared
+    @State private var commands = CommandCenter.shared
+    @State private var columnVisibility = NavigationSplitViewVisibility.automatic
+    @Environment(\.horizontalSizeClass) private var sizeClass
     private let services: AppServices
 
     public init(services: AppServices) {
@@ -51,7 +54,7 @@ public struct RootView: View {
 
     private var conversations: some View {
         let store = ConversationStore(context: context, attachments: services.attachments)
-        return NavigationSplitView {
+        return NavigationSplitView(columnVisibility: $columnVisibility) {
             ConversationListView(selection: $selection, store: store) {
                 services.widgetSnapshots?.publish(from: store)
             }
@@ -62,7 +65,7 @@ public struct RootView: View {
                     ToolbarItem(placement: .navigation) {
                         Menu("More", systemImage: "ellipsis.circle") {
                             Button("Personas", systemImage: "person.crop.square") { isShowingPersonas = true }
-                            Button("About", systemImage: "info.circle") { isShowingAbout = true }
+                            Button("About & Settings", systemImage: "info.circle") { isShowingAbout = true }
                         }
                     }
                 }
@@ -84,6 +87,12 @@ public struct RootView: View {
                 }
             }
         }
+        .navigationSplitViewStyle(.balanced)
+        // ⌘F: show the list (the sidebar, or the list itself in compact width) and its search field.
+        .onChange(of: commands.searchRequest) { _, _ in
+            if sizeClass == .compact { selection = nil } else { columnVisibility = .all }
+        }
+        .onChange(of: commands.settingsRequest) { _, _ in isShowingAbout = true }
         .sheet(isPresented: $isShowingModels) {
             NavigationStack {
                 ModelsView(services: services)
@@ -93,6 +102,7 @@ public struct RootView: View {
                         }
                     }
             }
+            .sheetFrame()
         }
         .sheet(isPresented: $isShowingPersonas) {
             NavigationStack {
@@ -103,6 +113,7 @@ public struct RootView: View {
                         }
                     }
             }
+            .sheetFrame()
         }
         .sheet(isPresented: $isShowingAbout) {
             NavigationStack {
@@ -113,6 +124,7 @@ public struct RootView: View {
                         }
                     }
             }
+            .sheetFrame()
         }
         .alert(
             "Something went wrong",
@@ -210,5 +222,16 @@ private struct KeepAwakeWhile: ViewModifier {
                 }
                 #endif
             }
+    }
+}
+
+extension View {
+    /// Sheets on Mac open at a usable size instead of shrinking to their content.
+    func sheetFrame() -> some View {
+        #if os(macOS)
+        frame(minWidth: 520, idealWidth: 620, minHeight: 560, idealHeight: 720)
+        #else
+        self
+        #endif
     }
 }

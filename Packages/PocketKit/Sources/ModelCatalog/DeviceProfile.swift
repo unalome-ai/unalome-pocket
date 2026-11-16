@@ -50,7 +50,7 @@ public struct DeviceProfile: Sendable, Equatable {
     public static func current(storageDirectory: URL) -> DeviceProfile {
         let processInfo = ProcessInfo.processInfo
         return DeviceProfile(
-            kind: currentKind(),
+            kind: detectKind(),
             physicalMemoryBytes: Int64(clamping: processInfo.physicalMemory),
             availableMemoryBytes: availableMemory(),
             freeDiskBytes: freeDiskSpace(at: storageDirectory),
@@ -60,7 +60,10 @@ public struct DeviceProfile: Sendable, Equatable {
         )
     }
 
-    private static func currentKind() -> Kind {
+    /// The kind of device this app runs on.
+    public static var currentKind: Kind { detectKind() }
+
+    private static func detectKind() -> Kind {
         #if os(macOS)
         return .mac
         #else
@@ -101,6 +104,20 @@ public struct DeviceProfile: Sendable, Equatable {
         guard sysctlbyname(name, &buffer, &size, nil, 0) == 0 else { return "unknown" }
         return String(decoding: buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
     }
+}
+
+extension DeviceProfile.Kind {
+    /// "iPhone", "iPad" or "Mac": the one place device wording comes from.
+    public var name: String {
+        switch self {
+        case .phone: "iPhone"
+        case .pad: "iPad"
+        case .mac: "Mac"
+        }
+    }
+
+    /// "this iPhone", "this iPad", "this Mac".
+    public var thisDevice: String { "this \(name)" }
 }
 
 /// Reads the device, but keeps the memory figures measured once, at launch.

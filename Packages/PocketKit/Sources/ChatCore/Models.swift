@@ -49,6 +49,9 @@ public final class Message {
     public var reasoningSeconds: Double?
     /// The reply was cut off at the length limit and can be continued.
     public var stoppedAtLengthLimit: Bool = false
+    /// The reply ended early: stopped by the user, by leaving the app, by low memory or by an
+    /// error. The text so far is kept and can be continued or regenerated.
+    public var wasInterrupted: Bool = false
     /// Attached images, as file names in the `AttachmentStore`.
     public var attachmentNames: [String] = []
     public var createdAt: Date

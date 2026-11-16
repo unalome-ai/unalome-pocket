@@ -11,6 +11,8 @@ struct ConversationListView: View {
     var onDelete: () -> Void = {}
 
     @State private var searchText = ""
+    @State private var isSearching = false
+    @State private var commands = CommandCenter.shared
     @State private var renaming: Conversation?
     @State private var renameText = ""
     @State private var errorMessage: String?
@@ -25,7 +27,8 @@ struct ConversationListView: View {
             },
             onDelete: delete
         )
-        .searchable(text: $searchText, prompt: "Search chats")
+        .searchable(text: $searchText, isPresented: $isSearching, prompt: "Search chats")
+        .onChange(of: commands.searchRequest) { _, _ in isSearching = true }
         .navigationTitle("Chats")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {

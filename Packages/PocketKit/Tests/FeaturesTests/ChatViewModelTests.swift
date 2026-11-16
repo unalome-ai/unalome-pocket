@@ -195,3 +195,53 @@ extension ChatViewModelTests {
         #expect(model.messages.map(\.text) == ["Hello", "ok"])
     }
 }
+
+@MainActor
+struct StopAndContinueTests {
+    private let container: ModelContainer
+    private let store: ConversationStore
+    private let conversation: Conversation
+
+    init() throws {
+        container = try ConversationStore.makeContainer(inMemory: true)
+        store = ConversationStore(context: container.mainContext)
+        conversation = try store.createConversation()
+    }
+
+    @Test func aStoppedReplyIsMarkedAndCanBeContinued() async throws {
+        let long = Array(repeating: "word", count: 60).joined(separator: " ")
+        let engine = ScriptedEngine(replies: [long, "the rest"], tokenDelay: .milliseconds(20))
+        let model = ChatViewModel(conversation: conversation, store: store, host: EngineHost(choice: .scripted) { _ in engine })
+        model.draft = "Hello"
+        model.send()
+        for _ in 0..<200 where model.messages.last?.text.isEmpty ?? true {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        model.stop()
+
+        let reply = try #require(model.messages.last)
+        #expect(reply.wasInterrupted)
+        #expect(!reply.stoppedAtLengthLimit)
+        #expect(model.canContinue)
+        #expect(model.canRegenerate)
+
+        let before = reply.text
+        model.continueReply()
+        #expect(!reply.wasInterrupted)
+        await model.waitForGeneration()
+        #expect(reply.text.hasPrefix(before))
+        #expect(reply.text.count > before.count)
+        #expect(!reply.wasInterrupted)
+        #expect(!model.canContinue)
+    }
+
+    @Test func aFinishedReplyIsNotInterrupted() async {
+        let engine = ScriptedEngine(replies: ["Done."], tokenDelay: .milliseconds(1))
+        let model = ChatViewModel(conversation: conversation, store: store, host: EngineHost(choice: .scripted) { _ in engine })
+        model.draft = "Hi"
+        model.send()
+        await model.waitForGeneration()
+        #expect(model.messages.last?.wasInterrupted == false)
+        #expect(!model.canContinue)
+    }
+}

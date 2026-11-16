@@ -171,7 +171,7 @@ public final class ModelLibrary {
             } catch is CancellationError {
                 endDownload(entry.id, as: .paused(currentProgress(entry.id)))
             } catch {
-                endDownload(entry.id, as: .failed(error.localizedDescription))
+                endDownload(entry.id, as: .failed(PlainErrorMessage.describe(error)))
             }
         }
     }

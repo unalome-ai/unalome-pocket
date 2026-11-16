@@ -3,6 +3,9 @@ import PhotosUI
 import SwiftData
 import SwiftUI
 import UnalomeDesign
+#if os(iOS)
+import UIKit
+#endif
 
 /// One conversation: the message list, the status pill and the composer.
 public struct ChatView: View {
@@ -54,9 +57,13 @@ public struct ChatView: View {
                     }
                     MessageRow(message: message, model: model)
                 }
+                if !model.messages.isEmpty {
+                    AINotice()
+                }
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 20)
+            .readableWidth()
         }
         .defaultScrollAnchor(.bottom)
         .defaultScrollAnchor(.bottom, for: .sizeChanges)
@@ -68,6 +75,7 @@ public struct ChatView: View {
         }
         .safeAreaInset(edge: .bottom) {
             ComposerArea(model: model, voice: voice)
+                .readableWidth()
         }
         .background(UnalomeColor.background)
         .navigationTitle(model.conversation.displayTitle)
@@ -89,6 +97,7 @@ public struct ChatView: View {
                     }
             }
         }
+        .focusedSceneValue(\.chatModel, model)
         .task { runStartAction() }
         // Leaving the conversation stops the reply and keeps what was written so far.
         .onDisappear {
@@ -190,32 +199,110 @@ private struct MessageRow: View {
                     .textSelection(.enabled)
             }
             if !isStreaming {
-                if message.stoppedAtLengthLimit {
-                    HStack(spacing: 10) {
-                        Text("Stopped at the length limit")
-                            .unalomeText(.footnote)
-                            .foregroundStyle(UnalomeColor.textSecondary)
-                        if message.id == model.messages.last?.id, model.canContinue {
-                            Button("Continue", action: model.continueReply)
-                                .unalomeText(.footnote)
-                                .buttonStyle(.borderless)
-                                .foregroundStyle(UnalomeColor.emerald)
-                        }
+                if let stopNote {
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 10) { stopLine(stopNote) }
+                        VStack(alignment: .leading, spacing: 4) { stopLine(stopNote) }
                     }
                 }
                 HStack(spacing: 4) {
                     CopyButton(text: message.text)
-                    if message.id == model.messages.last?.id, model.canRegenerate {
+                        .frame(minWidth: 44, minHeight: 44)
+                    if isLast, model.canRegenerate {
                         Button("Regenerate", systemImage: "arrow.clockwise", action: model.regenerate)
+                            .frame(minWidth: 44, minHeight: 44)
                     }
+                    ReportButton(message: message, model: model)
+                        .frame(minWidth: 44, minHeight: 44)
                 }
                 .labelStyle(.iconOnly)
                 .buttonStyle(.borderless)
                 .foregroundStyle(UnalomeColor.textTertiary)
+                .padding(.leading, -12)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .contextMenu { CopyButton(text: message.text) }
+        .contextMenu {
+            CopyButton(text: message.text)
+            if isLast, model.canRegenerate {
+                Button("Regenerate", systemImage: "arrow.clockwise", action: model.regenerate)
+            }
+            ReportButton(message: message, model: model)
+        }
+    }
+
+    private var isLast: Bool { message.id == model.messages.last?.id }
+
+    /// Why the reply ended early, if it did.
+    private var stopNote: String? {
+        if message.stoppedAtLengthLimit { return "Stopped at the length limit" }
+        if message.wasInterrupted { return "Stopped before the end" }
+        return nil
+    }
+
+    @ViewBuilder
+    private func stopLine(_ note: String) -> some View {
+        Text(note)
+            .unalomeText(.footnote)
+            .foregroundStyle(UnalomeColor.textSecondary)
+        if isLast, model.canContinue {
+            Button("Continue", action: model.continueReply)
+                .unalomeText(.footnote)
+                .buttonStyle(.borderless)
+                .foregroundStyle(UnalomeColor.emerald)
+                .frame(minHeight: 44)
+                .accessibilityHint("Asks the model to finish this reply")
+        }
+    }
+}
+
+/// "Report this response": explains what happens, then opens a prefilled email. Nothing is sent
+/// by the app (App Review guideline 1.2).
+private struct ReportButton: View {
+    let message: Message
+    let model: ChatViewModel
+    @State private var isConfirming = false
+    @State private var couldNotOpenMail = false
+    @Environment(\.openURL) private var openURL
+
+    var body: some View {
+        Button("Report this response", systemImage: "flag") { isConfirming = true }
+            .accessibilityHint("Opens an email you can review before sending")
+            .confirmationDialog("Report this response?", isPresented: $isConfirming, titleVisibility: .visible) {
+                Button("Write email") { openMail() }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text(ReportEmail.explanation)
+            }
+            .alert("No mail app", isPresented: $couldNotOpenMail) {
+                Button("Copy address") { Clipboard.copy(AppLinks.supportEmail) }
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text("Set up a mail app, or write to \(AppLinks.supportEmail) and paste the response.")
+            }
+    }
+
+    private func openMail() {
+        let index = model.messages.firstIndex { $0.id == message.id }
+        let question = index.flatMap { i in model.messages[..<i].last { $0.role == .user }?.text }
+        let email = ReportEmail(
+            question: question, reply: message.text, modelName: model.engineName,
+            appVersion: AppVersion.display, deviceName: DeviceWording.name)
+        guard let url = email.url else { return }
+        openURL(url) { accepted in
+            if !accepted { couldNotOpenMail = true }
+        }
+    }
+}
+
+/// Below the conversation: the replies come from a small on-device model and can be wrong.
+private struct AINotice: View {
+    var body: some View {
+        Label("Replies are AI-generated and can be wrong. Check anything important.", systemImage: "sparkles")
+            .unalomeText(.footnote)
+            .foregroundStyle(UnalomeColor.textTertiary)
+            .frame(maxWidth: .infinity)
+            .multilineTextAlignment(.center)
     }
 }
 
@@ -243,6 +330,7 @@ private struct ReasoningDisclosure: View {
                 }
                 .unalomeText(.footnote)
                 .foregroundStyle(UnalomeColor.textTertiary)
+                .frame(minHeight: 44)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -319,14 +407,17 @@ private struct EmptyChatView: View {
             VStack(spacing: 0) {
                 Text("Nothing leaves")
                     .foregroundStyle(UnalomeColor.textPrimary)
-                GradientText("this phone.")
+                GradientText("\(DeviceWording.thisDevice).")
             }
             .unalomeText(.display)
             .accessibilityElement(children: .combine)
             .accessibilityAddTraits(.isHeader)
-            Text("Replies are written on this device, and your chats are stored only here.")
+            Text("Replies are written on \(DeviceWording.thisDevice), and your chats are stored only here.")
                 .unalomeText(.callout)
                 .foregroundStyle(UnalomeColor.textSecondary)
+            Text("Replies are AI-generated and can be wrong.")
+                .unalomeText(.footnote)
+                .foregroundStyle(UnalomeColor.textTertiary)
         }
         .multilineTextAlignment(.center)
         .padding(32)
@@ -355,16 +446,21 @@ private struct ComposerArea: View {
             }
 
             if let reason = voice.unavailableReason {
-                Text(reason)
-                    .unalomeText(.footnote)
-                    .foregroundStyle(UnalomeColor.textSecondary)
-                    .multilineTextAlignment(.center)
+                VStack(spacing: 4) {
+                    Text(reason)
+                        .unalomeText(.footnote)
+                        .foregroundStyle(UnalomeColor.textSecondary)
+                        .multilineTextAlignment(.center)
+                    if voice.isPermissionDenied {
+                        OpenSettingsButton()
+                    }
+                }
             }
 
             if voice.isRecording {
                 HStack(spacing: 8) {
                     PulsingDot(color: UnalomeColor.error)
-                    Text("Listening on this device… tap the microphone to stop")
+                    Text("Listening on \(DeviceWording.thisDevice)… tap the microphone to stop")
                         .unalomeText(.footnote)
                         .foregroundStyle(UnalomeColor.textSecondary)
                 }
@@ -393,10 +489,14 @@ private struct ComposerArea: View {
 private struct Composer: View {
     @Bindable var model: ChatViewModel
     let voice: VoiceInput
-    @ScaledMetric(relativeTo: .body) private var buttonSize: CGFloat = 34
+    @ScaledMetric(relativeTo: .body) private var scaledButtonSize: CGFloat = 36
+    /// Grows with the text size, but not so far that the message field has no room left.
+    private var buttonSize: CGFloat { min(scaledButtonSize, 48) }
+    @State private var isDropTargeted = false
     @State private var pickedPhotos: [PhotosPickerItem] = []
     @State private var isShowingCamera = false
     @State private var isShowingPhotos = false
+    @State private var isShowingFiles = false
 
     /// Small models handle a few images per message at most.
     static let maxImages = 4
@@ -438,7 +538,21 @@ private struct Composer: View {
                     .lineLimit(1...6)
                     .textFieldStyle(.plain)
                     .padding(.vertical, 8)
-                    .onSubmit(model.send)
+                    .onSubmit(send)
+                    // Hardware keyboards: Return sends, Shift-Return starts a new line, Esc stops.
+                    .onKeyPress(.return, phases: .down) { press in
+                        if press.modifiers.contains(.shift) || press.modifiers.contains(.option) {
+                            model.draft += "\n"
+                        } else {
+                            send()
+                        }
+                        return .handled
+                    }
+                    .onKeyPress(.escape) {
+                        guard model.isGenerating else { return .ignored }
+                        model.stop()
+                        return .handled
+                    }
 
                 if !model.isGenerating {
                     micButton
@@ -450,6 +564,8 @@ private struct Composer: View {
                             .frame(width: buttonSize, height: buttonSize)
                             .background(UnalomeColor.textPrimary, in: Circle())
                             .foregroundStyle(UnalomeColor.background)
+                            .frame(minWidth: 44, minHeight: 44)
+                            .contentShape(Rectangle())
                     }
                     .accessibilityLabel("Stop generating")
                 } else {
@@ -459,6 +575,8 @@ private struct Composer: View {
                             .frame(width: buttonSize, height: buttonSize)
                             .background(UnalomeGradient.brand, in: Circle())
                             .foregroundStyle(UnalomeColor.background)
+                            .frame(minWidth: 44, minHeight: 44)
+                            .contentShape(Rectangle())
                     }
                     .disabled(!model.canSend)
                     .opacity(model.canSend ? 1 : 0.4)
@@ -471,6 +589,28 @@ private struct Composer: View {
         .padding(.trailing, 6)
         .padding(.vertical, 6)
         .liquidGlass(in: RoundedRectangle(cornerRadius: UnalomeRadius.card, style: .continuous), interactive: true)
+        .overlay {
+            if isDropTargeted {
+                RoundedRectangle(cornerRadius: UnalomeRadius.card, style: .continuous)
+                    .strokeBorder(UnalomeColor.emerald, lineWidth: 2)
+            }
+        }
+        // Drag an image onto the composer (iPad, Mac) when the model reads images.
+        .dropDestination(for: Data.self) { items, _ in
+            guard model.supportsImages, !model.isGenerating else { return false }
+            for data in items.prefix(remainingImages) { model.attachImage(data) }
+            return !items.isEmpty
+        } isTargeted: { isDropTargeted = model.supportsImages && $0 }
+        #if os(macOS)
+        .fileImporter(isPresented: $isShowingFiles, allowedContentTypes: [.image], allowsMultipleSelection: true) { result in
+            guard case .success(let urls) = result else { return }
+            for url in urls.prefix(remainingImages) {
+                let scoped = url.startAccessingSecurityScopedResource()
+                defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+                if let data = try? Data(contentsOf: url) { model.attachImage(data) }
+            }
+        }
+        #endif
         .photosPicker(
             isPresented: $isShowingPhotos, selection: $pickedPhotos,
             maxSelectionCount: max(remainingImages, 1), matching: .images, photoLibrary: .shared())
@@ -505,13 +645,20 @@ private struct Composer: View {
             if CameraPicker.isAvailable {
                 Button("Take photo", systemImage: "camera") { isShowingCamera = true }
             }
+            #else
+            Button("Choose file…", systemImage: "folder") { isShowingFiles = true }
             #endif
+            Button("Paste image", systemImage: "doc.on.clipboard") {
+                if let data = Clipboard.imageData() { model.attachImage(data) }
+            }
+            .disabled(!Clipboard.hasImage)
         } label: {
             Image(systemName: "plus")
                 .fontWeight(.semibold)
                 .frame(width: buttonSize, height: buttonSize)
                 .foregroundStyle(UnalomeColor.textSecondary)
-                .contentShape(Circle())
+                .frame(minWidth: 44, minHeight: 44)
+                .contentShape(Rectangle())
         }
         .menuIndicator(.hidden)
         .disabled(model.isGenerating || remainingImages == 0)
@@ -533,10 +680,11 @@ private struct Composer: View {
                 .frame(width: buttonSize, height: buttonSize)
                 .foregroundStyle(voice.isRecording ? UnalomeColor.background : UnalomeColor.textSecondary)
                 .background(voice.isRecording ? UnalomeColor.error : .clear, in: Circle())
-                .contentShape(Circle())
+                .frame(minWidth: 44, minHeight: 44)
+                .contentShape(Rectangle())
         }
         .disabled(voice.state == .preparing)
-        .accessibilityLabel(voice.isRecording ? "Stop dictation" : "Dictate on this device")
+        .accessibilityLabel(voice.isRecording ? "Stop dictation" : "Dictate on \(DeviceWording.thisDevice)")
     }
 
     private func send() {
@@ -589,7 +737,8 @@ private struct ContextLimitNote: View {
             Text("Earlier messages are no longer seen by the model")
                 .unalomeText(.footnote)
                 .foregroundStyle(UnalomeColor.textTertiary)
-                .fixedSize()
+                .multilineTextAlignment(.center)
+                .layoutPriority(1)
             Rectangle().fill(UnalomeColor.glassBorder).frame(height: 1)
         }
         .accessibilityElement(children: .combine)
@@ -704,5 +853,40 @@ private struct LoadingPill: View {
             }
         }
         .accessibilityElement(children: .combine)
+    }
+}
+
+// MARK: - Layout and focus
+
+extension View {
+    /// Caps the width at a comfortable line length and centres it (iPad, Mac).
+    func readableWidth(_ width: CGFloat = 760) -> some View {
+        frame(maxWidth: width).frame(maxWidth: .infinity)
+    }
+}
+
+extension FocusedValues {
+    /// The chat in the focused window, for the Chat menu (stop) on iPad and Mac.
+    @Entry public var chatModel: ChatViewModel?
+}
+
+/// Opens the app's page in Settings, where a denied permission can be allowed.
+struct OpenSettingsButton: View {
+    @Environment(\.openURL) private var openURL
+
+    var body: some View {
+        Button("Open Settings") {
+            #if os(iOS)
+            if let url = URL(string: UIApplication.openSettingsURLString) { openURL(url) }
+            #else
+            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") {
+                openURL(url)
+            }
+            #endif
+        }
+        .unalomeText(.footnote)
+        .buttonStyle(.borderless)
+        .foregroundStyle(UnalomeColor.emerald)
+        .frame(minHeight: 44)
     }
 }

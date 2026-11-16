@@ -1,4 +1,5 @@
 import ChatCore
+import SwiftUI
 import Foundation
 import Observation
 
@@ -138,9 +139,10 @@ public final class ChatViewModel {
         store.attachments?.delete([name])
     }
 
-    /// The last reply was cut off at the length limit and can be continued.
+    /// The last reply was cut off (length limit, stopped, interrupted) and can be continued.
     public var canContinue: Bool {
-        !isGenerating && messages.last?.role == .assistant && messages.last?.stoppedAtLengthLimit == true
+        guard !isGenerating, let last = messages.last, last.role == .assistant, !last.text.isEmpty else { return false }
+        return last.stoppedAtLengthLimit || last.wasInterrupted
     }
 
     /// The latest user message, the only one that can be edited and resent.
@@ -220,6 +222,7 @@ public final class ChatViewModel {
     public func continueReply() {
         guard canContinue, let reply = messages.last else { return }
         reply.stoppedAtLengthLimit = false
+        reply.wasInterrupted = false
         let turn = ChatTurn(role: .user, text: "Continue exactly where you stopped, without repeating anything.")
         run(turn: turn, history: fittedHistory(messages, turn: turn), into: reply)
     }
@@ -335,9 +338,14 @@ public final class ChatViewModel {
                 try store.deleteMessages([reply])
                 messages.removeAll { $0.id == reply.id }
             } else {
+                reply.wasInterrupted = !completed && !reply.stoppedAtLengthLimit
                 conversation.updatedAt = .now
                 try store.save()
                 onReplySaved?()
+                if completed {
+                    // Streaming text is not announced token by token; say once that it is done.
+                    AccessibilityNotification.Announcement("Reply finished").post()
+                }
                 if completed, tokensPerSecond != nil || memoryUsage != nil {
                     onReplyFinished?(host.choice, ReplyMetrics(tokensPerSecond: tokensPerSecond, memory: memoryUsage))
                 }

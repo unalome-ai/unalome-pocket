@@ -13,8 +13,12 @@ public enum UnalomeColor {
     public static let glassBorder = Color.white.opacity(0.08)
 
     public static let textPrimary = Color.white
-    public static let textSecondary = Color.white.opacity(0.6)
-    public static let textTertiary = Color.white.opacity(0.4)
+    public static let textSecondary = Color.white.opacity(textSecondaryOpacity)
+    /// White at 50%: the faintest text that still reads at 4.5:1 on the background, the raised
+    /// background and glass (40%, the site's value, measured 3.7:1 and failed WCAG AA).
+    public static let textTertiary = Color.white.opacity(textTertiaryOpacity)
+    public static let textTertiaryOpacity = 0.5
+    public static let textSecondaryOpacity = 0.6
 
     /// Accent solids.
     public static let emerald = Color(hex: 0x10B981)
@@ -63,5 +67,30 @@ extension Color {
             green: Double((hex >> 8) & 0xFF) / 255,
             blue: Double(hex & 0xFF) / 255
         )
+    }
+}
+
+/// WCAG 2 contrast for the dark palette: white text at some opacity over a solid colour.
+public enum Contrast {
+    /// Relative luminance of an sRGB colour given as 0xRRGGBB.
+    public static func luminance(_ hex: UInt32) -> Double {
+        luminance(r: Double((hex >> 16) & 0xFF) / 255, g: Double((hex >> 8) & 0xFF) / 255, b: Double(hex & 0xFF) / 255)
+    }
+
+    static func luminance(r: Double, g: Double, b: Double) -> Double {
+        func channel(_ c: Double) -> Double { c <= 0.04045 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4) }
+        return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b)
+    }
+
+    /// White at `opacity` composited over `background` (and an optional white `overlay`
+    /// opacity, for glass), against that background.
+    public static func whiteText(opacity: Double, on background: UInt32, glass: Double = 0) -> Double {
+        func component(_ shift: UInt32) -> Double { Double((background >> shift) & 0xFF) / 255 }
+        func over(_ base: Double, _ alpha: Double) -> Double { alpha + base * (1 - alpha) }
+        let base = [component(16), component(8), component(0)].map { over($0, glass) }
+        let text = base.map { over($0, opacity) }
+        let lighter = luminance(r: text[0], g: text[1], b: text[2])
+        let darker = luminance(r: base[0], g: base[1], b: base[2])
+        return (lighter + 0.05) / (darker + 0.05)
     }
 }

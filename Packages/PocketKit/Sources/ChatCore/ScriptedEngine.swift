@@ -114,7 +114,7 @@ public struct ScriptedEngine: ChatEngine {
 
     static let reasoning = """
         The user asks a question. I should answer briefly and clearly, \
-        and keep the example short enough to read on a phone.
+        and keep the example short enough to read on a small screen.
         """
 
     public static let defaultReplies: [String] = [
@@ -133,7 +133,7 @@ public struct ScriptedEngine: ChatEngine {
         Good question. A local model answers in three steps:
 
         1. Your message and the earlier turns become the prompt.
-        2. The model predicts one token at a time, using the phone's GPU.
+        2. The model predicts one token at a time, using this device's GPU.
         3. Each token appears here as soon as it is ready.
 
         That is why you can press **Stop** at any moment and keep what was written so far.

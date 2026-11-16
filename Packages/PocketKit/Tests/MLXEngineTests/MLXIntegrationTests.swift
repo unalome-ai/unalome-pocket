@@ -321,6 +321,24 @@ struct MLXIntegrationTests {
         await engine.unload()
     }
 
+    /// Past the cap, no copy of the cache is kept, so cache memory is not doubled.
+    @Test(.timeLimit(.minutes(10)))
+    func keptPrefixRespectsTheByteCap() async throws {
+        let directory = try await Self.installedModel()
+        let capped = MLXChatEngine(
+            directory: directory, displayName: "Qwen 3.5 0.8B", supportsThinking: true, maxKeptPrefixBytes: 1)
+        try await capped.load { _ in }
+        _ = try await Self.collect(capped, "Say hello in three words.", options: GenerationOptions(temperature: 0, maxTokens: 10))
+        #expect(capped.keptPrefixTokens == nil)
+        await capped.unload()
+
+        let uncapped = MLXChatEngine(directory: directory, displayName: "Qwen 3.5 0.8B", supportsThinking: true)
+        try await uncapped.load { _ in }
+        _ = try await Self.collect(uncapped, "Say hello in three words.", options: GenerationOptions(temperature: 0, maxTokens: 10))
+        #expect((uncapped.keptPrefixTokens ?? 0) > 0)
+        await uncapped.unload()
+    }
+
     /// A memory warning during a reply stops it with an error that says why.
     @Test(.timeLimit(.minutes(10)))
     func memoryWarningStopsTheReplyWithAReason() async throws {

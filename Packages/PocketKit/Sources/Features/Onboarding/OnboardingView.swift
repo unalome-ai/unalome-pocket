@@ -376,11 +376,7 @@ struct OnboardingView: View {
     }
 
     private var deviceNoun: String {
-        #if os(macOS)
-        "this Mac."
-        #else
-        UIDevice.current.userInterfaceIdiom == .pad ? "this iPad." : "this iPhone."
-        #endif
+        DeviceWording.thisDevice + "."
     }
 
     private var pageTransition: AnyTransition {

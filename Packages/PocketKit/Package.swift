@@ -69,7 +69,7 @@ let package = Package(
                 .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
             ]
         ),
-        .testTarget(name: "FeaturesTests", dependencies: ["Features", "ChatCore", "ModelCatalog"]),
+        .testTarget(name: "FeaturesTests", dependencies: ["Features", "ChatCore", "ModelCatalog", "UnalomeDesign"]),
     ],
     swiftLanguageModes: [.v6]
 )

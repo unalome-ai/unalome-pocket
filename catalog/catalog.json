@@ -14,7 +14,7 @@
         "name": "Apache 2.0",
         "url": "https://huggingface.co/Qwen/Qwen3.5-0.8B/blob/main/LICENSE"
       },
-      "goodFor": "Quick answers on any supported iPhone. The smallest and fastest.",
+      "goodFor": "Quick answers on any supported device. The smallest and fastest.",
       "tier": "small",
       "qualityRank": 1,
       "supportsThinking": true
@@ -123,7 +123,7 @@
         "name": "Apache 2.0",
         "url": "https://ai.google.dev/gemma/apache_2"
       },
-      "goodFor": "Higher-quality answers on 12 GB phones, iPad and Mac.",
+      "goodFor": "Higher-quality answers on devices with 12 GB of memory or more.",
       "tier": "large",
       "qualityRank": 7,
       "supportsThinking": true,

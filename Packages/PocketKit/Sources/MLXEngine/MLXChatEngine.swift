@@ -78,6 +78,7 @@ public final class MLXChatEngine: ChatEngine {
     private let gpuCacheLimitBytes: Int
     private let reasoningTags: ReasoningTags
     private let reusesConversation: Bool
+    private let maxKeptPrefixBytes: Int
     private let maxImageDimension: Int?
     private let imageGuard: ImageMemoryGuard?
     private let state = Mutex(State())
@@ -120,6 +121,8 @@ public final class MLXChatEngine: ChatEngine {
     ///   - maxContextTokens: The context the app keeps conversations within (memory, not the
     ///     model's theoretical maximum, is the limit on phones).
     ///   - reusesConversation: Keep the cache between turns. Off only to measure the difference.
+    ///   - maxKeptPrefixBytes: The kept copy of the cache doubles the cache's memory while a reply
+    ///     runs. Past this size no copy is kept, and the next turn processes its prompt again.
     public init(
         directory: URL,
         displayName: String,
@@ -129,6 +132,7 @@ public final class MLXChatEngine: ChatEngine {
         maxContextTokens: Int = 8192,
         gpuCacheLimitBytes: Int = 256 << 20,
         reusesConversation: Bool = true,
+        maxKeptPrefixBytes: Int = 256 << 20,
         maxImageDimension: Int? = nil,
         imageGuard: ImageMemoryGuard? = nil
     ) {
@@ -141,6 +145,7 @@ public final class MLXChatEngine: ChatEngine {
         self.gpuCacheLimitBytes = gpuCacheLimitBytes
         self.reasoningTags = reasoningTags
         self.reusesConversation = reusesConversation
+        self.maxKeptPrefixBytes = maxKeptPrefixBytes
     }
 
     /// Loads weights and tokenizer from disk. Reading local files reports no intermediate
@@ -418,6 +423,7 @@ public final class MLXChatEngine: ChatEngine {
             return kept
         }
         let reuse = reusesConversation
+        let maxKeptBytes = maxKeptPrefixBytes
         let initialOutput = output
         let (stats, next, finalOutput) = try await container.perform { (model: ModelContext) in
             var output = initialOutput
@@ -449,12 +455,15 @@ public final class MLXChatEngine: ChatEngine {
             }
 
             // Process up to the boundary and keep a copy there for the next turn.
+            // The copy is skipped when the cache is past the cap: two copies of a long
+            // conversation's cache would not fit next to the model on a phone.
             var next: PromptPrefix?
             if boundary > cachedCount {
                 try Task.checkCancellation()
                 PromptPrefix.prefill(Array(tokens[cachedCount..<boundary]), model: model.model, cache: cache)
-                next = PromptPrefix(tokens: Array(tokens[..<boundary]), cache: cache.map { $0.copy() })
-            } else if boundary == cachedCount, boundary > 0 {
+            }
+            if boundary >= cachedCount, boundary > 0,
+               PromptPrefix.shouldKeep(cacheBytes: PromptPrefix.bytes(of: cache), limit: maxKeptBytes) {
                 next = PromptPrefix(tokens: Array(tokens[..<boundary]), cache: cache.map { $0.copy() })
             }
             let prefillSeconds = Date.now.timeIntervalSince(start)
@@ -603,6 +612,16 @@ final class PromptPrefix: @unchecked Sendable {
     init(tokens: [Int], cache: [KVCache]) {
         self.tokens = tokens
         self.cache = cache
+    }
+
+    /// Memory the cache's arrays take.
+    static func bytes(of cache: [KVCache]) -> Int {
+        cache.reduce(0) { total, layer in total + layer.state.reduce(0) { $0 + $1.nbytes } }
+    }
+
+    /// Whether a copy of a cache of `cacheBytes` may be kept for the next turn.
+    static func shouldKeep(cacheBytes: Int, limit: Int) -> Bool {
+        cacheBytes <= limit
     }
 
     static func commonPrefixLength(_ a: [Int], _ b: [Int]) -> Int {
