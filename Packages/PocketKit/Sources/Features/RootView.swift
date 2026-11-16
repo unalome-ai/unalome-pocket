@@ -58,6 +58,7 @@ public struct RootView: View {
             ConversationListView(selection: $selection, store: store) {
                 services.widgetSnapshots?.publish(from: store)
             }
+                .navigationSplitViewColumnWidth(min: 240, ideal: 280, max: 400)
                 .toolbar {
                     ToolbarItem(placement: .navigation) {
                         Button("Models", systemImage: "cpu") { isShowingModels = true }

@@ -45,17 +45,11 @@ struct AboutView: View {
             }
 
             Section {
-                Link(destination: AppLinks.website) {
-                    Label("unalome.ai", systemImage: "globe")
-                }
-                Link(destination: AppLinks.sourceCode) {
-                    Label("Source code", systemImage: "chevron.left.forwardslash.chevron.right")
-                }
+                LinkRow(title: "unalome.ai", systemImage: "globe", url: AppLinks.website)
+                LinkRow(title: "Source code", systemImage: "chevron.left.forwardslash.chevron.right", url: AppLinks.sourceCode)
                 if let url = URL(string: "mailto:\(AppLinks.supportEmail)") {
-                    Link(destination: url) {
-                        Label("Contact support", systemImage: "envelope")
-                    }
-                    .accessibilityHint("Opens an email to \(AppLinks.supportEmail)")
+                    LinkRow(title: "Contact support", systemImage: "envelope", url: url)
+                        .accessibilityHint("Opens an email to \(AppLinks.supportEmail)")
                 }
             }
 
@@ -129,6 +123,26 @@ struct AboutView: View {
     }
 }
 
+/// A link in the app's own colours. On Mac, `Link` otherwise uses the system link colour and the
+/// icons the system accent colour, which the user may have set to anything.
+private struct LinkRow: View {
+    let title: String
+    let systemImage: String
+    let url: URL
+
+    var body: some View {
+        Link(destination: url) {
+            Label {
+                Text(title).foregroundStyle(UnalomeColor.textPrimary)
+            } icon: {
+                Image(systemName: systemImage).foregroundStyle(UnalomeColor.emerald)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
 private struct LicenseRow: View {
     let name: String
     let licence: String
@@ -153,6 +167,7 @@ private struct LicenseRow: View {
                         .foregroundStyle(UnalomeColor.textTertiary)
                 }
             }
+            .buttonStyle(.plain)
             .accessibilityHint("Opens the licence")
         } else {
             content

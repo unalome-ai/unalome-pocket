@@ -9,13 +9,14 @@ struct DownloadLiveActivity: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: DownloadActivityAttributes.self) { context in
             LockScreenDownloadView(attributes: context.attributes, content: context.state)
+                .background { WidgetGlow() }
                 .activityBackgroundTint(UnalomeColor.background)
                 .activitySystemActionForegroundColor(UnalomeColor.textPrimary)
         } dynamicIsland: { context in
             DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
-                    UnalomeMark(height: 28)
-                        .padding(.leading, 4)
+                    UnalomeProgress(fraction: context.state.fraction, height: 44, lineWidth: 1.8)
+                        .padding(.leading, 6)
                 }
                 DynamicIslandExpandedRegion(.trailing) {
                     Text(context.state.percentText)
@@ -37,14 +38,14 @@ struct DownloadLiveActivity: Widget {
                     .padding(.horizontal, 4)
                 }
             } compactLeading: {
-                UnalomeMark(height: 18)
+                UnalomeProgress(fraction: context.state.fraction, height: 22, lineWidth: 1.4)
             } compactTrailing: {
                 Text(context.state.percentText)
                     .font(.caption.weight(.semibold))
                     .monospacedDigit()
                     .foregroundStyle(UnalomeColor.teal)
             } minimal: {
-                UnalomeMark(height: 18)
+                UnalomeProgress(fraction: context.state.fraction, height: 22, lineWidth: 1.4)
             }
         }
     }
@@ -56,7 +57,7 @@ private struct LockScreenDownloadView: View {
 
     var body: some View {
         HStack(alignment: .center, spacing: 14) {
-            UnalomeMark(height: 34)
+            UnalomeProgress(fraction: content.fraction, height: 56, lineWidth: 2)
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
                     Text(attributes.modelName)
@@ -99,5 +100,32 @@ private struct DownloadDetail: View {
             let total = ByteCountFormatter.string(fromByteCount: content.totalBytes, countStyle: .file)
             return "\(done) of \(total) · \(content.statusText)"
         }
+    }
+}
+
+/// The download as the unalome itself: the line is drawn from the spiral upwards as bytes
+/// arrive, and the triangle lights when the model is ready.
+struct UnalomeProgress: View {
+    let fraction: Double
+    let height: CGFloat
+    let lineWidth: CGFloat
+
+    var body: some View {
+        let style = StrokeStyle(lineWidth: lineWidth, lineCap: .round, lineJoin: .round)
+        let clamped = min(max(fraction, 0), 1)
+        ZStack {
+            UnalomeLine().stroke(Color.white.opacity(0.16), style: style)
+            UnalomeLine()
+                .trim(from: 0, to: clamped)
+                .stroke(
+                    LinearGradient(colors: UnalomeGradient.colors, startPoint: .bottom, endPoint: .top),
+                    style: style)
+            UnalomeTip()
+                .fill(UnalomeGradient.brand)
+                .opacity(clamped >= 1 ? 1 : 0.2)
+        }
+        // The figure's width is 0.46 of its height.
+        .frame(width: height * 0.46, height: height)
+        .accessibilityHidden(true)
     }
 }

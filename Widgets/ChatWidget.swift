@@ -61,16 +61,24 @@ struct ChatWidgetView: View {
 
     private var small: some View {
         VStack(alignment: .leading, spacing: 0) {
-            UnalomeMark(height: 30)
+            HStack(alignment: .top) {
+                UnalomeMark(height: 30)
+                Spacer()
+                OnDeviceDot()
+            }
             Spacer()
-            Text("New chat")
+            // The site's two-part headline: plain first line, brand gradient second.
+            Text("Ask anything.")
                 .unalomeText(.headline)
                 .foregroundStyle(UnalomeColor.textPrimary)
-            Text("On this device")
-                .unalomeText(.footnote)
-                .foregroundStyle(UnalomeColor.textSecondary)
+            Text("On this device.")
+                .unalomeText(.headline)
+                .foregroundStyle(isFullColor ? AnyShapeStyle(UnalomeGradient.brand) : AnyShapeStyle(.secondary))
+                .widgetAccentable()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("New chat in Unalome Pocket")
         .widgetURL(AppRoute.newChat.url)
         .containerBackground(for: .widget) { background }
     }
@@ -84,6 +92,12 @@ struct ChatWidgetView: View {
                 action("Ask by voice", systemImage: "mic", route: .voice)
             }
             .frame(width: 118, alignment: .leading)
+
+            Capsule()
+                .fill(isFullColor ? AnyShapeStyle(UnalomeGradient.brand) : AnyShapeStyle(.tertiary))
+                .frame(width: 2)
+                .opacity(0.7)
+                .accessibilityHidden(true)
 
             latestChat
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -139,7 +153,7 @@ struct ChatWidgetView: View {
     @ViewBuilder
     private var background: some View {
         if isFullColor {
-            UnalomeColor.background
+            WidgetGlow()
         } else {
             Color.clear
         }
@@ -175,5 +189,33 @@ struct ChatWidgetView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .widgetURL(entry.latest.map { AppRoute.conversation($0.conversationID).url } ?? AppRoute.newChat.url)
         .containerBackground(for: .widget) { Color.clear }
+    }
+}
+
+/// The app's backdrop at widget size: the base colour lifted by two soft glows.
+struct WidgetGlow: View {
+    var body: some View {
+        ZStack {
+            UnalomeColor.background
+            RadialGradient(
+                colors: [UnalomeColor.emerald.opacity(0.26), .clear],
+                center: UnitPoint(x: 0.1, y: 0.05), startRadius: 0, endRadius: 190)
+            RadialGradient(
+                colors: [UnalomeGradient.colors[2].opacity(0.13), .clear],
+                center: UnitPoint(x: 1.0, y: 0.95), startRadius: 0, endRadius: 170)
+        }
+    }
+}
+
+/// The site's status dot: a small lit point that says the model is local.
+struct OnDeviceDot: View {
+    var body: some View {
+        Circle()
+            .fill(UnalomeColor.emerald)
+            .frame(width: 7, height: 7)
+            .shadow(color: UnalomeColor.emerald.opacity(0.8), radius: 4)
+            .padding(.top, 4)
+            .widgetAccentable()
+            .accessibilityHidden(true)
     }
 }

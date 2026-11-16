@@ -20,8 +20,14 @@ struct UnalomePocketApp: App {
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
+        #if DEBUG
+        let screenshots = ScreenshotMode.isOn
+        #else
+        let screenshots = false
+        #endif
         do {
-            container = try ConversationStore.makeContainer(including: ModelLibrary.persistentModels)
+            container = try ConversationStore.makeContainer(
+                including: ModelLibrary.persistentModels, inMemory: screenshots)
             let storage = try ModelStorage.applicationSupport()
             try storage.prepare()
             let library = try ModelLibrary(
@@ -34,23 +40,33 @@ struct UnalomePocketApp: App {
             )
             let preferences = AppPreferences(defaults: .standard)
             let canRunLocalModels = !EngineSelection.isSimulator
-            let choice = AppServices.initialChoice(
+            var choice = AppServices.initialChoice(
                 stored: preferences.selectedEngine,
                 installedIDs: Set(library.installed.map(\.repoID)),
                 appleModel: AppleChatEngine.availability,
                 canRunLocalModels: canRunLocalModels
             )
-            let host = EngineHost(choice: choice) { choice in
+            var attachments = try AttachmentStore.applicationSupport()
+            var makeEngine: @MainActor (EngineChoice) -> any ChatEngine = { choice in
                 EngineSelection.makeEngine(for: choice, storage: storage, library: library)
             }
+            #if DEBUG
+            if screenshots {
+                choice = .scripted
+                attachments = try ScreenshotMode.makeAttachments()
+                makeEngine = { _ in ScreenshotMode.makeEngine() }
+                try ScreenshotMode.seed(ConversationStore(context: container.mainContext, attachments: attachments))
+            }
+            #endif
+            let host = EngineHost(choice: choice, makeEngine: makeEngine)
             services = AppServices(
                 host: host,
                 library: library,
                 preferences: preferences,
                 appleModelAvailability: { AppleChatEngine.availability },
                 canRunLocalModels: canRunLocalModels,
-                attachments: try AttachmentStore.applicationSupport(),
-                widgetSnapshots: Self.makeWidgetSnapshots()
+                attachments: attachments,
+                widgetSnapshots: screenshots ? nil : Self.makeWidgetSnapshots()
             )
             #if os(iOS)
             downloadActivities = DownloadActivities(library: library)
@@ -79,6 +95,9 @@ struct UnalomePocketApp: App {
         Window("Unalome Pocket", id: "main") {
             root
                 .frame(minWidth: 720, minHeight: 520)
+                #if DEBUG
+                .task { ScreenshotMode.sizeMacWindow() }
+                #endif
                 .task { MemoryPressure.shared.start { await services.host.unloadForMemoryWarning() } }
         }
         .defaultSize(width: 1100, height: 760)

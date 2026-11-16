@@ -497,6 +497,8 @@ private struct Composer: View {
     @State private var isShowingCamera = false
     @State private var isShowingPhotos = false
     @State private var isShowingFiles = false
+    /// The cursor or selection in the message field, so Shift-Return inserts the newline there.
+    @State private var selection: TextSelection?
 
     /// Small models handle a few images per message at most.
     static let maxImages = 4
@@ -533,7 +535,7 @@ private struct Composer: View {
                     attachMenu
                 }
 
-                TextField("Message", text: $model.draft, axis: .vertical)
+                TextField("Message", text: $model.draft, selection: $selection, axis: .vertical)
                     .unalomeText(.body)
                     .lineLimit(1...6)
                     .textFieldStyle(.plain)
@@ -542,7 +544,7 @@ private struct Composer: View {
                     // Hardware keyboards: Return sends, Shift-Return starts a new line, Esc stops.
                     .onKeyPress(.return, phases: .down) { press in
                         if press.modifiers.contains(.shift) || press.modifiers.contains(.option) {
-                            model.draft += "\n"
+                            insertNewline()
                         } else {
                             send()
                         }
@@ -685,6 +687,20 @@ private struct Composer: View {
         }
         .disabled(voice.state == .preparing)
         .accessibilityLabel(voice.isRecording ? "Stop dictation" : "Dictate on \(DeviceWording.thisDevice)")
+    }
+
+    /// Replaces the selection (or inserts at the cursor) with a newline; at the end without one.
+    private func insertNewline() {
+        var draft = model.draft
+        var range = draft.endIndex..<draft.endIndex
+        if case .selection(let selected) = selection?.indices,
+           selected.lowerBound >= draft.startIndex, selected.upperBound <= draft.endIndex {
+            range = selected
+        }
+        let offset = draft.distance(from: draft.startIndex, to: range.lowerBound)
+        draft.replaceSubrange(range, with: "\n")
+        model.draft = draft
+        selection = TextSelection(insertionPoint: draft.index(draft.startIndex, offsetBy: offset + 1))
     }
 
     private func send() {

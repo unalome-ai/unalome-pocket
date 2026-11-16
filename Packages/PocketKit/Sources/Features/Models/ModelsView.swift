@@ -178,7 +178,7 @@ private struct StorageRow: View {
             Text("Storage")
                 .unalomeText(.eyebrow)
                 .foregroundStyle(UnalomeColor.textTertiary)
-            Text("Models use \(ByteFormat.file(usedBytes))")
+            Text(usedBytes > 0 ? "Models use \(ByteFormat.file(usedBytes))" : "No models installed yet")
                 .unalomeText(.headline)
             if let freeBytes {
                 Text("\(ByteFormat.file(freeBytes)) free on this device")

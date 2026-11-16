@@ -112,3 +112,31 @@ struct ScriptedEngineTests {
 private final class Box: @unchecked Sendable {
     var value: Double?
 }
+
+struct ScriptedResponderTests {
+    @Test func answersAMatchedPromptWithItsReplyAndReasoning() async throws {
+        let engine = ScriptedEngine(tokenDelay: .milliseconds(1), displayName: "Qwen 3.5 2B") { prompt in
+            prompt == "Question" ? ("The **answer**.", "Some thought.") : nil
+        }
+        #expect(engine.displayName == "Qwen 3.5 2B")
+        var text = ""
+        var reasoning = ""
+        let turn = ChatTurn(role: .user, text: "Question")
+        for try await event in engine.reply(to: turn, history: [], options: GenerationOptions(thinking: true)) {
+            if case .token(let token) = event { text += token }
+            if case .reasoning(let thought) = event { reasoning += thought }
+        }
+        #expect(text.trimmingCharacters(in: .whitespacesAndNewlines) == "The **answer**.")
+        #expect(reasoning.contains("Some thought."))
+    }
+
+    @Test func otherPromptsUseTheDefaultReplies() async throws {
+        let engine = ScriptedEngine(replies: ["Default."], tokenDelay: .milliseconds(1)) { _ in nil }
+        var text = ""
+        for try await event in engine.reply(to: ChatTurn(role: .user, text: "Else"), history: [], options: GenerationOptions()) {
+            if case .token(let token) = event { text += token }
+        }
+        #expect(text == "Default.")
+        #expect(engine.displayName == "Scripted demo")
+    }
+}

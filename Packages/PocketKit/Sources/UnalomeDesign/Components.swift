@@ -14,18 +14,28 @@ public struct GradientText: View {
 }
 
 /// A capsule on Liquid Glass.
+/// At accessibility text sizes, where its text can wrap, it becomes a rounded rectangle so a
+/// tall pill never looks like a stretched capsule.
 public struct Pill<Content: View>: View {
     private let content: Content
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     public init(@ViewBuilder content: () -> Content) {
         self.content = content()
     }
 
     public var body: some View {
-        content
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .liquidGlass(in: Capsule())
+        if dynamicTypeSize.isAccessibilitySize {
+            content
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .liquidGlass(in: RoundedRectangle(cornerRadius: UnalomeRadius.control, style: .continuous))
+        } else {
+            content
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .liquidGlass(in: Capsule())
+        }
     }
 }
 
@@ -88,6 +98,7 @@ public struct PulsingDot: View {
 public struct StatusPill: View {
     private let engineName: String
     private let tokensPerSecond: Double?
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     public init(engineName: String, tokensPerSecond: Double?) {
         self.engineName = engineName
@@ -96,12 +107,28 @@ public struct StatusPill: View {
 
     public var body: some View {
         Pill {
-            HStack(spacing: 8) {
-                PulsingDot()
-                Text(statusLine)
-                    .unalomeText(.footnote)
-                    .foregroundStyle(UnalomeColor.textSecondary)
-                    .monospacedDigit()
+            if dynamicTypeSize.isAccessibilitySize {
+                // Large text: the model and the speed on lines of their own, no prefix.
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 8) {
+                        PulsingDot()
+                        Text(engineName)
+                    }
+                    if let tokensPerSecond {
+                        Text("\(Int(tokensPerSecond.rounded())) tok/s")
+                    }
+                }
+                .unalomeText(.footnote)
+                .foregroundStyle(UnalomeColor.textSecondary)
+                .monospacedDigit()
+            } else {
+                HStack(spacing: 8) {
+                    PulsingDot()
+                    Text(statusLine)
+                        .unalomeText(.footnote)
+                        .foregroundStyle(UnalomeColor.textSecondary)
+                        .monospacedDigit()
+                }
             }
         }
         .accessibilityElement(children: .combine)

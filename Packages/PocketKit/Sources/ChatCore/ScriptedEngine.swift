@@ -3,11 +3,16 @@ import Foundation
 /// A fake engine that streams canned replies word by word.
 /// Used in the Simulator, in previews and in tests, where MLX cannot run.
 public struct ScriptedEngine: ChatEngine {
-    public let displayName = "Scripted demo"
+    public let displayName: String
     public let capabilities: EngineCapabilities
+
+    /// A reply (and the reasoning before it) chosen by the user's message, for scripts that
+    /// answer particular prompts. `nil` falls back to `replies`.
+    public typealias Responder = @Sendable (_ prompt: String) -> (reply: String, reasoning: String)?
 
     private let replies: [String]
     private let tokenDelay: Duration
+    private let responder: Responder?
 
     /// - Parameters:
     ///   - replies: Canned replies, used in turn. An empty list uses the defaults.
@@ -16,8 +21,12 @@ public struct ScriptedEngine: ChatEngine {
     public init(
         replies: [String] = ScriptedEngine.defaultReplies,
         tokenDelay: Duration = .milliseconds(35),
-        maxContextTokens: Int = 4096
+        maxContextTokens: Int = 4096,
+        displayName: String = "Scripted demo",
+        responder: Responder? = nil
     ) {
+        self.displayName = displayName
+        self.responder = responder
         self.replies = replies.isEmpty ? ScriptedEngine.defaultReplies : replies
         self.tokenDelay = tokenDelay
         // Accepts images so the attachment flow can be tried in the Simulator; it cannot see them.
@@ -40,12 +49,16 @@ public struct ScriptedEngine: ChatEngine {
         // and regenerating the same turn is deterministic.
         let userTurnsBefore = history.count { $0.role == .user }
         var script = replies[userTurnsBefore % replies.count]
-        if !turn.images.isEmpty {
+        var reasoning = Self.reasoning
+        if let scripted = responder?(turn.text) {
+            script = scripted.reply
+            reasoning = scripted.reasoning
+        } else if !turn.images.isEmpty {
             script = "*The scripted demo cannot look at images; a vision model on a device can.*\n\n" + script
         }
         if options.thinking {
             // Like a reasoning model: thoughts in <think> tags, split out as they stream.
-            script = "<think>\n\(Self.reasoning)\n</think>\n\n" + script
+            script = "<think>\n\(reasoning)\n</think>\n\n" + script
         }
         let allTokens = Self.tokenize(script)
         let tokens = Array(allTokens.prefix(max(options.maxTokens, 0)))
